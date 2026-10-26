@@ -3,8 +3,11 @@
 Based on upstream `v0.9.5`, maintained on `custom/grouped-v0.9.5` in
 https://github.com/passionate11/herdr.
 
-The custom client adds titled space boxes, untitled boxes for multiple agents
-sharing a tab, and subtle cards with half-row gaps. Grouping uses endpoint,
+The custom client adds optional workspace trees with short, untitled branches
+for multiple agents sharing a tab. Single and split agents use the same text
+columns; cards use a subtle tint, with a stronger tint and a left marker for
+the focused row. Boxed groups
+remain available when `group_tree` is false. Grouping uses endpoint,
 workspace and tab identities. Priority sorting and custom agent views retain
 their upstream order. Rendering, mouse targets and scrolling share one layout.
 The server protocol is unchanged.
@@ -12,14 +15,18 @@ The server protocol is unchanged.
 ```toml
 [ui.sidebar.agents]
 group_boxes = true
+group_tree = true
 cards = true
 row_gap = 1
 rows = [["state_icon", "workspace", "tab", "agent"]]
 ```
 
-Cards mix the host terminal background toward its foreground by 3.5%, or 9%
-for the focused agent. A single agent in a split tab gets no subgroup. Small
-viewports fall back to the simpler layout. Scrolled groups close both borders.
+Cards mix the host terminal background toward its foreground by 3.5%, or
+9% for the focused agent. A single agent
+in a split tab gets no subgroup. Small viewports fall back to the simpler
+layout. Scrolled groups retain their heading and complete visible branches.
+Tree rows use agent-tree's compact status marks while retaining Herdr theme
+colors: `◐` while working, `●` when blocked, `✓` when done, and `○` when idle.
 
 ## Build And Validate
 

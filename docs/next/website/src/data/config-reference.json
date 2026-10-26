@@ -1067,10 +1067,16 @@
           "description": "Frame expanded agents by workspace in spaces order, with untitled subgroups for tabs containing multiple agents. Disabled for priority order and custom agent views."
         },
         {
+          "key": "ui.sidebar.agents.group_tree",
+          "type": "boolean",
+          "default": "false",
+          "description": "Use workspace tree headings and short, untitled branches for agents sharing a split tab. Tree rows use compact working, blocked, done and idle marks with the active theme's original status colors. Takes precedence over group_boxes in spaces order. Priority order and custom agent views keep their existing layout."
+        },
+        {
           "key": "ui.sidebar.agents.cards",
           "type": "boolean",
           "default": "false",
-          "description": "Tint agent cards inside workspace boxes using the host terminal colors. The first row_gap row becomes a half-height card edge; remaining gap rows stay blank."
+          "description": "Tint agent cards in grouped lists using the host terminal colors, with stronger tint for the focused agent. The first row_gap row becomes a half-height card edge; remaining gap rows stay blank."
         },
         {
           "key": "ui.sidebar.agents.row_gap",

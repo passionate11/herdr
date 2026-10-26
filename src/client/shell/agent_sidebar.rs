@@ -14,12 +14,14 @@ pub(super) mod layout;
 use layout::AgentListGeometry;
 #[cfg(test)]
 mod tests;
+mod tree;
 
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) endpoint_id: Option<ClientEndpointId>,
     pub(super) workspace_id: String,
     pub(super) workspace_label: String,
+    pub(super) workspace_number: usize,
     pub(super) tab_id: String,
     pub(super) workspace_focused: bool,
     pub(super) status: crate::api::schema::AgentStatus,
@@ -215,6 +217,10 @@ pub(super) fn render_agent_list<T>(
     let layout = geometry.layout(*agent_scroll);
     for group in &layout.boxes {
         let row = agent_row(&rows[group.index]);
+        if geometry.tree {
+            tree::render_group(buffer, group, row, &config.palette);
+            continue;
+        }
         render_group_box(
             buffer,
             group.rect,
@@ -227,6 +233,7 @@ pub(super) fn render_agent_list<T>(
             &config.palette,
         );
     }
+    tree::render_links(buffer, &layout.links, &config.palette);
     for &(index, rect) in &layout.tails {
         let row = agent_row(&rows[index]);
         put_text(
@@ -239,6 +246,7 @@ pub(super) fn render_agent_list<T>(
         );
     }
     for (index, rect) in layout.entries {
+        let row = agent_row(&rows[index]);
         render_row(
             buffer,
             rect,
@@ -247,6 +255,18 @@ pub(super) fn render_agent_list<T>(
             geometry.cards,
             hits,
         );
+        if geometry.tree && row.focused {
+            for y in rect.y..rect.bottom() {
+                put_text(
+                    buffer,
+                    rect.x,
+                    y,
+                    1,
+                    "▏",
+                    Style::default().fg(config.palette.accent),
+                );
+            }
+        }
     }
     // Tails belong to the card above; border rows deliberately have no hit target.
     for (index, rect) in layout.tails {
@@ -341,6 +361,7 @@ pub(super) fn agent_row(
         endpoint_id: None,
         workspace_id: agent.workspace_id.clone(),
         workspace_label: workspace.label.clone(),
+        workspace_number: workspace.number,
         tab_id: agent.tab_id.clone(),
         workspace_focused: workspace.focused,
         status: agent.agent_status,
@@ -374,12 +395,17 @@ pub(super) fn render_agent_row(
             .fg(palette.subtext0)
             .add_modifier(Modifier::BOLD)
     };
-    let status_style = Style::default().fg(status_color(row.status, palette));
+    let (symbol, color) = if boxed && config.agents.group_tree {
+        tree::status_indicator(row.status, palette)
+    } else {
+        (
+            status_icon(row.status, config.status_indicators),
+            status_color(row.status, palette),
+        )
+    };
+    let status_style = Style::default().fg(color);
     let secondary = Style::default().fg(palette.overlay0);
-    let icon = (
-        status_icon(row.status, config.status_indicators),
-        Style::default().fg(status_color(row.status, palette)),
-    );
+    let icon = (symbol, status_style);
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {
             kind: crate::ui::ResolvedTokenKind::StateIcon,

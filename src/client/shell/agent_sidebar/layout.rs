@@ -2,6 +2,8 @@ use ratatui::layout::Rect;
 
 use super::{AgentRow, ClientShellConfig};
 
+mod tree;
+
 #[derive(Clone, Copy)]
 struct RowGeometry {
     height: u16,
@@ -16,6 +18,8 @@ pub(in crate::client::shell) struct AgentListGeometry {
     body: Rect,
     rows: Vec<RowGeometry>,
     gap: u16,
+    has_split_rows: bool,
+    pub(super) tree: bool,
     pub(super) boxed: bool,
     pub(super) cards: bool,
 }
@@ -25,6 +29,13 @@ pub(super) struct AgentListLayout {
     pub(super) entries: Vec<(usize, Rect)>,
     pub(super) tails: Vec<(usize, Rect)>,
     pub(super) boxes: Vec<GroupBox>,
+    pub(super) links: Vec<TreeLink>,
+}
+
+pub(super) struct TreeLink {
+    pub(super) rect: Rect,
+    pub(super) last: bool,
+    pub(super) split_join: Option<char>,
 }
 
 pub(super) struct GroupBox {
@@ -44,15 +55,17 @@ impl AgentListGeometry {
         // Boxed lists already leave the last column free for the scrollbar.
         let width = body.width;
         let boxed = grouped_view
-            && config.agents.group_boxes
+            && (config.agents.group_boxes || config.agents.group_tree)
             && config.agent_panel_sort == crate::config::AgentPanelSortConfig::Spaces
             && width >= 5
             && body.height >= 3;
-        let split_boxes = boxed && width >= 10 && body.height >= 5;
+        let tree = boxed && config.agents.group_tree && width >= 8;
+        let split_boxes = boxed && width >= 10 && (tree || body.height >= 5);
         let same_space = |a: &AgentRow, b: &AgentRow| {
             a.endpoint_id == b.endpoint_id && a.workspace_id == b.workspace_id
         };
         let same_tab = |a: &AgentRow, b: &AgentRow| same_space(a, b) && a.tab_id == b.tab_id;
+        let mut has_split_rows = false;
         let geometry = rows
             .iter()
             .enumerate()
@@ -66,9 +79,13 @@ impl AgentListGeometry {
                 let split = split_boxes
                     && (previous.is_some_and(|p| same_tab(p, row))
                         || next.is_some_and(|n| same_tab(row, n)));
-                let max_height = body
-                    .height
-                    .saturating_sub(2 * u16::from(boxed) + 2 * u16::from(split));
+                has_split_rows |= split;
+                let reserved = if tree {
+                    1
+                } else {
+                    2 * u16::from(boxed) + 2 * u16::from(split)
+                };
+                let max_height = body.height.saturating_sub(reserved);
                 RowGeometry {
                     height: (row.rows.len().max(1).min(u16::MAX as usize) as u16).min(max_height),
                     starts_space: boxed && previous.is_none_or(|p| !same_space(p, row)),
@@ -83,6 +100,8 @@ impl AgentListGeometry {
             body,
             rows: geometry,
             gap: config.agents.row_gap,
+            has_split_rows,
+            tree,
             boxed,
             cards: boxed && config.agents.cards,
         }
@@ -107,6 +126,9 @@ impl AgentListGeometry {
     }
 
     fn max_scroll(&self) -> usize {
+        if self.tree {
+            return self.tree_max_scroll();
+        }
         let mut suffix = 0u32;
         let mut start = self.rows.len();
         for (index, row) in self.rows.iter().enumerate().rev() {
@@ -153,6 +175,9 @@ impl AgentListGeometry {
     }
 
     pub(super) fn layout(&self, scroll: usize) -> AgentListLayout {
+        if self.tree {
+            return self.tree_layout(scroll);
+        }
         let mut layout = AgentListLayout::default();
         if self.body.is_empty() {
             return layout;
@@ -160,7 +185,8 @@ impl AgentListGeometry {
         let inset = u16::from(self.boxed);
         let box_width = self.body.width.saturating_sub(inset);
         let inner_width = box_width.saturating_sub(2 * inset);
-        let margin = u16::from(self.cards && inner_width >= 10);
+        // Reserve the subgroup border in the shared gutter so all cards align.
+        let margin = u16::from(self.has_split_rows || (self.cards && inner_width >= 10));
         let mut y = self.body.y;
         let mut content_bottom = y;
         let mut space = None;
@@ -185,11 +211,10 @@ impl AgentListGeometry {
             if starts_split {
                 split = Some((index, split_top));
             }
-            let entry_inset = if row.split { 2 } else { margin };
             let rect = Rect::new(
-                self.body.x + inset + entry_inset,
+                self.body.x + inset + margin,
                 content_y,
-                inner_width - 2 * entry_inset,
+                inner_width - 2 * margin,
                 row.height,
             );
             layout.entries.push((index, rect));
@@ -198,7 +223,7 @@ impl AgentListGeometry {
                 if let Some((first, top)) = split.take() {
                     layout.boxes.push(GroupBox {
                         index: first,
-                        rect: Rect::new(self.body.x + 2, top, inner_width - 2, y - top + 1),
+                        rect: Rect::new(self.body.x + 1, top, inner_width, y - top + 1),
                         split: true,
                     });
                 }
@@ -225,12 +250,7 @@ impl AgentListGeometry {
         if let Some((index, top)) = split {
             layout.boxes.push(GroupBox {
                 index,
-                rect: Rect::new(
-                    self.body.x + 2,
-                    top,
-                    inner_width - 2,
-                    content_bottom - top + 1,
-                ),
+                rect: Rect::new(self.body.x + 1, top, inner_width, content_bottom - top + 1),
                 split: true,
             });
             content_bottom += 1;

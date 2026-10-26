@@ -76,7 +76,8 @@ int main(int argc, char **argv) {
 
 FG = (205, 214, 244)
 BG = (30, 30, 46)
-SPLIT_TOP = re.compile("\u2502 +\u256d\u2500+\u256e")
+SPLIT_TOP = re.compile("\u2502 *\u256d\u2500+\u256e")
+TREE_SPLIT = re.compile("\u2502 +\u256d|[\u251c\u2514]\u2500\u252c")
 
 
 def require(condition, message):
@@ -244,6 +245,8 @@ class Client:
 class Rehearsal:
     def __init__(self, args, pyte):
         self.args, self.pyte = args, pyte
+        self.tree = getattr(args, "tree", False)
+        self.split_top = TREE_SPLIT if self.tree else SPLIT_TOP
         self.root = Path(tempfile.mkdtemp(prefix="herdr-rehearse-", dir="/tmp")).resolve()
         self.output = args.output.resolve() if args.output else self.root / "artifacts"
         self.output.mkdir(parents=True, exist_ok=True)
@@ -261,7 +264,11 @@ class Rehearsal:
         })
         for name in ["config/herdr", "state", "cache", "data", "run", "bin", "pids"]:
             (self.root / name).mkdir(parents=True, exist_ok=True)
-        (self.root / "config/herdr/config.toml").write_text(CONFIG, encoding="ascii")
+        configuration = CONFIG
+        if self.tree:
+            configuration = configuration.replace("group_boxes = true", "group_boxes = false\ngroup_tree = true")
+        self.configuration = configuration
+        (self.root / "config/herdr/config.toml").write_text(configuration, encoding="ascii")
         self.server = None
         self.server_log = None
         self.expected = {}
@@ -447,7 +454,7 @@ class Rehearsal:
     def check_client_preferences(self, preferences):
         # A different config default proves that the new client loaded the file.
         config = self.root / "config/herdr/config.toml"
-        config.write_text(CONFIG.replace("sidebar_width = 32", "sidebar_width = 26"), encoding="ascii")
+        config.write_text(self.configuration.replace("sidebar_width = 32", "sidebar_width = 26"), encoding="ascii")
         with Client(self.args.new, self.env, self.root, 120, 64, self.pyte) as client:
             client.pump(3)
             width = preferences["sidebar_width"]
@@ -462,7 +469,7 @@ class Rehearsal:
             ]
             expected_divider = max(3, min(61, int(64 * preferences["sidebar_section_split"] + 0.5)))
             require(dividers == [expected_divider], "replacement client did not load migrated sidebar split")
-            require(SPLIT_TOP.search(client.text(32)), "replacement client has no untitled subgroup")
+            require(self.split_top.search(client.text(32)), "replacement client has no untitled subgroup")
             client.save(self.output, "after-wide", self.args.png)
             return {"sidebar_width": width, "section_divider_row": dividers[0], "config_default_width": 26}
 
@@ -485,7 +492,7 @@ class Rehearsal:
         with Client(new, self.env, self.root, 120, 64, self.pyte) as client:
             client.pump(3)
             sidebar = client.text(32)
-            require(len(SPLIT_TOP.findall(sidebar)) >= 2, "expected separate untitled subgroups for alpha and beta")
+            require(len(self.split_top.findall(sidebar)) >= 2, "expected separate untitled subgroups for alpha and beta")
             target = list(self.expected)[1]
             other = list(self.expected)[0]
             self.api("pane.focus", {"pane_id": self.expected[other]["pane_id"]})
@@ -502,8 +509,8 @@ class Rehearsal:
         with Client(new, self.env, self.root, 72, 24, self.pyte) as client:
             client.pump(3)
             initial = client.text(32)
-            require(SPLIT_TOP.search(initial), "narrow client is missing its untitled subgroup")
-            first_group = next(y for y, line in enumerate(client.screen.display) if SPLIT_TOP.search(line[:32]))
+            require(self.split_top.search(initial), "narrow client is missing its untitled subgroup")
+            first_group = next(y for y, line in enumerate(client.screen.display) if self.split_top.search(line[:32]))
             for _ in range(3):
                 client.wheel(7, min(first_group + 2, 22), down=True)
             client.pump(1)
@@ -613,6 +620,7 @@ def main():
     parser.add_argument("--keep", action="store_true", help="keep the isolated server and files after a successful rehearsal")
     parser.add_argument("--output", type=Path, help="artifact directory outside the disposable server directory")
     parser.add_argument("--png", action="store_true", help="also render terminal captures as PNG using Pillow")
+    parser.add_argument("--tree", action="store_true", help="rehearse workspace trees and short split-tab branches")
     parser.add_argument("--cc", default="cc", help="C compiler used to build the two mock agent executables")
     parser.add_argument("--timeout", type=float, default=20, help="per-check timeout in seconds")
     args = parser.parse_args()

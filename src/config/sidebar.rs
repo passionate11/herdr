@@ -429,6 +429,8 @@ pub struct AgentsSidebarConfig {
     pub row_gap: u16,
     /// Frame agents by workspace and add an untitled subgroup for split tabs.
     pub group_boxes: bool,
+    /// Use workspace tree headings and short, untitled split-tab branches.
+    pub group_tree: bool,
     /// Tint agent cards and use the first gap row as a half-height card edge.
     pub cards: bool,
 }
@@ -456,6 +458,7 @@ impl Default for AgentsSidebarConfig {
             rows_by_agent: BTreeMap::new(),
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
             group_boxes: true,
+            group_tree: false,
             cards: false,
         }
     }
@@ -510,6 +513,7 @@ mod tests {
         assert!(config.agents.rows_by_agent.is_empty());
         assert_eq!(config.agents.row_gap, 0);
         assert!(config.agents.group_boxes);
+        assert!(!config.agents.group_tree);
         assert!(!config.agents.cards);
         assert_eq!(
             config.spaces.rows,
@@ -541,6 +545,9 @@ cards = true
             toml::from_str("group_boxes = false\n").expect("disabled group boxes");
         assert!(!disabled.group_boxes);
         assert!(!disabled.cards);
+        let tree: AgentsSidebarConfig =
+            toml::from_str("group_tree = true\n").expect("optional tree sidebar");
+        assert!(tree.group_tree);
     }
 
     #[test]

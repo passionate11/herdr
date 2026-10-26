@@ -7,6 +7,7 @@ fn row(workspace: &str, tab: &str, agent: &str) -> AgentRow {
         endpoint_id: None,
         workspace_id: workspace.into(),
         workspace_label: workspace.into(),
+        workspace_number: 1,
         tab_id: tab.into(),
         workspace_focused: false,
         status: crate::api::schema::AgentStatus::Idle,
@@ -66,11 +67,11 @@ fn custom_grouped_agents_render_space_and_untitled_split_boxes() {
         [
             "╭─ one ───────────╮",
             "│  codex          │",
-            "│ ╭─────────────╮ │",
-            "│ │ pi          │ │",
-            "│ │▀▀▀▀▀▀▀▀▀▀▀▀▀│ │",
-            "│ │ claude      │ │",
-            "│ ╰─────────────╯ │",
+            "│╭───────────────╮│",
+            "││ pi            ││",
+            "││▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀││",
+            "││ claude        ││",
+            "│╰───────────────╯│",
             "│  codex          │",
             "╰─────────────────╯",
         ]
@@ -89,6 +90,128 @@ fn custom_grouped_agents_render_space_and_untitled_split_boxes() {
 }
 
 #[test]
+fn custom_tree_renders_untitled_split_branches_without_indenting_cards() {
+    let mut rows = vec![
+        row("one", "a", "codex"),
+        row("one", "b", "pi"),
+        row("one", "b", "claude"),
+        row("one", "c", "codex"),
+    ];
+    rows[3].focused = true;
+    let mut config = config();
+    config.agents.group_tree = true;
+    config.agents.group_boxes = false;
+    let area = Rect::new(0, 0, 20, 15);
+    let mut buffer = Buffer::empty(area);
+    let mut hits = ShellHitMap::default();
+    let mut scroll = 0;
+    render_agent_list(
+        &mut buffer,
+        area,
+        &rows,
+        None,
+        &config,
+        &mut scroll,
+        &mut hits,
+        |row| row,
+        |buffer, rect, row, grouped, cards, hits| {
+            register_agent_hit(hits, row, rect);
+            render_agent_row(buffer, rect, row, &config, grouped, cards);
+        },
+    );
+    let text = (3..11)
+        .map(|y| {
+            (0..20)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        text,
+        [
+            "1 ▾ one",
+            " ├─  codex",
+            " │  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+            " │ ╭ pi",
+            " ├─┤▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+            " │ ╰ claude",
+            " │  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+            " └─ ▏codex",
+        ]
+    );
+    assert_eq!(buffer[(5, 6)].bg, agent_card_bg(&config, false));
+    assert_eq!(buffer[(5, 10)].bg, agent_card_bg(&config, true));
+    assert!(hits.agents.iter().all(|(rect, _)| rect.x == 4));
+    assert!(!hits.agents.iter().any(|(rect, _)| rect.y == 3));
+    assert_eq!(
+        hits.agents.iter().find(|(rect, _)| rect.y == 7).unwrap().1,
+        "pi"
+    );
+}
+
+#[test]
+fn custom_tree_scroll_preserves_visible_groups_and_reveals_every_agent() {
+    let mut rows = vec![
+        row("one", "a", "a"),
+        row("one", "a", "b"),
+        row("one", "a", "c"),
+        row("one", "b", "d"),
+        row("two", "a", "e"),
+        row("two", "a", "f"),
+    ];
+    rows[4].endpoint_id = Some(ClientEndpointId::Local);
+    rows[5].endpoint_id = Some(ClientEndpointId::Local);
+    for (gap, lines) in [(0, 1), (1, 1), (3, 2)] {
+        let mut config = config();
+        config.agents.group_tree = true;
+        config.agents.row_gap = gap;
+        for row in &mut rows {
+            row.rows.resize(lines, row.rows[0].clone());
+        }
+        for width in [4, 5, 7, 8, 9, 10, 20] {
+            for height in 1..=22 {
+                let body = Rect::new(2, 3, width, height);
+                let geometry = AgentListGeometry::new(&rows, |row| row, &config, body, true);
+                for scroll in 0..rows.len() {
+                    let layout = geometry.layout(scroll);
+                    assert!(!layout.entries.is_empty(), "{body:?} scroll={scroll}");
+                    if geometry.tree {
+                        for (_, rect) in layout.entries.iter().chain(&layout.tails) {
+                            assert_eq!(rect.x, body.x + 4);
+                            assert!(rect.y > body.y && rect.bottom() <= body.bottom());
+                            assert!(rect.right() < body.right());
+                        }
+                        for group in &layout.boxes {
+                            assert!(group.rect.y >= body.y);
+                            assert!(group.rect.bottom() <= body.bottom());
+                        }
+                        for link in &layout.links {
+                            assert!(link.rect.y > body.y && link.rect.bottom() <= body.bottom());
+                            assert!(link.rect.right() <= body.right());
+                        }
+                    }
+                }
+                for target in 0..rows.len() {
+                    let start = geometry.reveal(0, target);
+                    assert!(geometry
+                        .layout(start)
+                        .entries
+                        .iter()
+                        .any(|(index, _)| *index == target));
+                }
+                let last_start = geometry.metrics(usize::MAX).max_offset_from_bottom;
+                assert_eq!(
+                    geometry.layout(last_start).entries.last().unwrap().0,
+                    rows.len() - 1
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn custom_grouped_agents_keep_scrolled_boxes_closed_and_reveal_targets() {
     let mut rows = vec![
         row("one", "a", "a"),
@@ -98,19 +221,32 @@ fn custom_grouped_agents_keep_scrolled_boxes_closed_and_reveal_targets() {
         row("two", "a", "e"),
         row("two", "a", "f"),
     ];
-    for (gap, lines) in [(0, 1), (1, 1), (3, 2)] {
+    for (gap, lines, cards) in [
+        (0, 1, false),
+        (0, 1, true),
+        (1, 1, false),
+        (1, 1, true),
+        (3, 2, false),
+        (3, 2, true),
+    ] {
         let mut config = config();
         config.agents.row_gap = gap;
+        config.agents.cards = cards;
         for row in &mut rows {
             row.rows.resize(lines, row.rows[0].clone());
         }
-        for width in [4, 5, 9, 10, 20] {
+        for width in [4, 5, 9, 10, 12, 13, 20] {
             for height in 1..=22 {
                 let body = Rect::new(2, 3, width, height);
                 let geometry = AgentListGeometry::new(&rows, |row| row, &config, body, true);
                 for scroll in 0..rows.len() {
                     let layout = geometry.layout(scroll);
                     assert!(!layout.entries.is_empty(), "{body:?} scroll={scroll}");
+                    let first = layout.entries[0].1;
+                    assert!(layout
+                        .entries
+                        .iter()
+                        .all(|(_, rect)| rect.x == first.x && rect.width == first.width));
                     for group in &layout.boxes {
                         assert!(group.rect.y >= body.y && group.rect.bottom() <= body.bottom());
                         assert!(group.rect.x >= body.x && group.rect.right() <= body.right());
@@ -154,6 +290,7 @@ fn custom_grouped_agents_qualify_groups_by_endpoint_and_keep_other_sort_orders()
     for view in [false, true] {
         let mut config = ClientShellConfig::from_config(&Config::default());
         config.agents.group_boxes = true;
+        config.agents.group_tree = true;
         if view {
             config.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
         }
@@ -315,9 +452,10 @@ fn custom_grouped_layout_profile() {
                 )
             })
             .collect::<Vec<_>>();
-        for grouped in [false, true] {
+        for (grouped, tree) in [(false, false), (true, false), (true, true)] {
             let mut config = config();
             config.agents.group_boxes = grouped;
+            config.agents.group_tree = tree;
             let started = std::time::Instant::now();
             for _ in 0..iterations {
                 let geometry = AgentListGeometry::new(
@@ -331,7 +469,7 @@ fn custom_grouped_layout_profile() {
                 std::hint::black_box(geometry.layout(metrics.max_offset_from_bottom));
             }
             eprintln!(
-                "custom_grouped_layout_profile rows={count} grouped={grouped} geometry_ns={}",
+                "custom_grouped_layout_profile rows={count} grouped={grouped} tree={tree} geometry_ns={}",
                 started.elapsed().as_nanos() / iterations
             );
 
@@ -359,7 +497,7 @@ fn custom_grouped_layout_profile() {
                 std::hint::black_box(&buffer);
             }
             eprintln!(
-                "custom_grouped_layout_profile rows={count} grouped={grouped} render_ns={}",
+                "custom_grouped_layout_profile rows={count} grouped={grouped} tree={tree} render_ns={}",
                 started.elapsed().as_nanos() / iterations
             );
         }
