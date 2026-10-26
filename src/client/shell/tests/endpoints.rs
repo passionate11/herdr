@@ -547,6 +547,8 @@ fn agent_navigation_keeps_scroll_when_target_is_visible() {
 #[test]
 fn switching_machines_preserves_aggregate_agent_scroll_and_visible_rows() {
     let (mut state, remote) = state_with_scrollable_agents();
+    state.config.agents.group_boxes = false;
+    state.compose(100, 28).expect("flat aggregate agent list");
     for endpoint_id in [remote.clone(), ClientEndpointId::Local, remote] {
         let visible = state.hits.endpoint_agents.clone();
         let (rect, _, pane_id) = visible
@@ -1263,6 +1265,7 @@ fn aggregate_agents_use_configured_rows_machine_token_and_status_colors() {
     use crate::config::{AgentSidebarToken, StatusIndicatorStyle};
 
     let mut config = Config::default();
+    config.ui.sidebar.agents.group_boxes = false;
     config.ui.status_indicators = StatusIndicatorStyle::Symbols;
     config.ui.sidebar.agents.rows = vec![vec![
         AgentSidebarToken::StateIcon,
@@ -2201,6 +2204,7 @@ fn disconnected_active_endpoint_freezes_surface_and_marks_cached_ui_stale() {
     use crate::config::{AgentSidebarToken, StatusIndicatorStyle};
 
     let (mut state, endpoint_id) = state_with_remote();
+    state.config.agents.group_boxes = false;
     state.config.status_indicators = StatusIndicatorStyle::Symbols;
     state.config.agents.rows = vec![vec![
         AgentSidebarToken::StateIcon,

@@ -1061,6 +1061,18 @@
           ]
         },
         {
+          "key": "ui.sidebar.agents.group_boxes",
+          "type": "boolean",
+          "default": "true",
+          "description": "Frame expanded agents by workspace in spaces order, with untitled subgroups for tabs containing multiple agents. Disabled for priority order and custom agent views."
+        },
+        {
+          "key": "ui.sidebar.agents.cards",
+          "type": "boolean",
+          "default": "false",
+          "description": "Tint agent cards inside workspace boxes using the host terminal colors. The first row_gap row becomes a half-height card edge; remaining gap rows stay blank."
+        },
+        {
           "key": "ui.sidebar.agents.row_gap",
           "type": "integer",
           "default": "0",

@@ -10,8 +10,18 @@ use ratatui::{
 
 use super::*;
 
+pub(super) mod layout;
+use layout::AgentListGeometry;
+#[cfg(test)]
+mod tests;
+
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
+    pub(super) endpoint_id: Option<ClientEndpointId>,
+    pub(super) workspace_id: String,
+    pub(super) workspace_label: String,
+    pub(super) tab_id: String,
+    pub(super) workspace_focused: bool,
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
@@ -79,10 +89,10 @@ pub(super) fn render_agent_panel(
         config,
         agent_scroll,
         hits,
-        |row| row.rows.len(),
-        |buffer, rect, row, hits| {
+        |row| row,
+        |buffer, rect, row, boxed, cards, hits| {
             hits.agents.push((rect, row.pane_id.clone()));
-            render_agent_row(buffer, rect, row, config);
+            render_agent_row(buffer, rect, row, config, boxed, cards);
         },
     );
 }
@@ -159,8 +169,8 @@ pub(super) fn render_agent_list<T>(
     config: &ClientShellConfig,
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
-    row_lines: impl Fn(&T) -> usize,
-    mut render_row: impl FnMut(&mut Buffer, Rect, &T, &mut ShellHitMap),
+    agent_row: impl Fn(&T) -> &AgentRow,
+    mut render_row: impl FnMut(&mut Buffer, Rect, &T, bool, bool, &mut ShellHitMap),
 ) {
     let body = Rect::new(
         area.x,
@@ -186,45 +196,61 @@ pub(super) fn render_agent_list<T>(
         return;
     }
 
-    let row_heights = rows
-        .iter()
-        .map(|row| row_lines(row).max(1).min(u16::MAX as usize) as u16)
-        .collect::<Vec<_>>();
-    let gaps = rows
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            if index + 1 < rows.len() {
-                config.agents.row_gap
-            } else {
-                0
-            }
-        })
-        .collect::<Vec<_>>();
-    let metrics =
-        super::scroll::list_scroll_metrics(&row_heights, &gaps, body.height, *agent_scroll);
+    let geometry = AgentListGeometry::new(rows, &agent_row, config, body, empty_message.is_none());
+    let metrics = geometry.metrics(*agent_scroll);
     hits.agent_max_scroll = metrics.max_offset_from_bottom;
     hits.agent_scroll_metrics = Some(metrics);
     *agent_scroll = metrics
         .max_offset_from_bottom
         .saturating_sub(metrics.offset_from_bottom);
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
-    let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
-    let mut y = body.y;
-    for (index, row) in rows.iter().enumerate().skip(*agent_scroll) {
-        let height = row_heights[index].min(body.height);
-        if y.saturating_add(height) > body.bottom() {
-            break;
-        }
-        let rect = Rect::new(body.x, y, content_width, height);
-        render_row(buffer, rect, row, hits);
-        y = y
-            .saturating_add(height)
-            .saturating_add(if index + 1 < rows.len() {
-                config.agents.row_gap
+    let content_body = Rect::new(
+        body.x,
+        body.y,
+        body.width
+            .saturating_sub(u16::from(show_scrollbar && !geometry.boxed)),
+        body.height,
+    );
+    let geometry = geometry.with_body(content_body);
+    let layout = geometry.layout(*agent_scroll);
+    for group in &layout.boxes {
+        let row = agent_row(&rows[group.index]);
+        render_group_box(
+            buffer,
+            group.rect,
+            if group.split {
+                ""
             } else {
-                0
-            });
+                &row.workspace_label
+            },
+            !group.split && row.workspace_focused,
+            &config.palette,
+        );
+    }
+    for &(index, rect) in &layout.tails {
+        let row = agent_row(&rows[index]);
+        put_text(
+            buffer,
+            rect.x,
+            rect.y,
+            rect.width,
+            &"▀".repeat(rect.width as usize),
+            Style::default().fg(agent_card_bg(config, row.focused)),
+        );
+    }
+    for (index, rect) in layout.entries {
+        render_row(
+            buffer,
+            rect,
+            &rows[index],
+            geometry.boxed,
+            geometry.cards,
+            hits,
+        );
+    }
+    // Tails belong to the card above; border rows deliberately have no hit target.
+    for (index, rect) in layout.tails {
+        register_agent_hit(hits, agent_row(&rows[index]), rect);
     }
 
     if show_scrollbar {
@@ -312,6 +338,11 @@ pub(super) fn agent_row(
     );
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
+        endpoint_id: None,
+        workspace_id: agent.workspace_id.clone(),
+        workspace_label: workspace.label.clone(),
+        tab_id: agent.tab_id.clone(),
+        workspace_focused: workspace.focused,
         status: agent.agent_status,
         focused: agent.focused,
         rows,
@@ -323,9 +354,13 @@ pub(super) fn render_agent_row(
     rect: Rect,
     row: &AgentRow,
     config: &ClientShellConfig,
+    boxed: bool,
+    cards: bool,
 ) {
     let palette = &config.palette;
-    let row_style = if row.focused {
+    let row_style = if cards {
+        Style::default().bg(agent_card_bg(config, row.focused))
+    } else if row.focused {
         Style::default().bg(palette.active_row_bg)
     } else {
         Style::default()
@@ -351,7 +386,27 @@ pub(super) fn render_agent_row(
             style: Default::default(),
         }]]
     } else {
-        row.rows.clone()
+        row.rows
+            .iter()
+            .map(|tokens| {
+                let other_text = tokens.iter().any(|token| {
+                    !matches!(
+                        token.kind,
+                        crate::ui::ResolvedTokenKind::StateIcon
+                            | crate::ui::ResolvedTokenKind::Workspace(_)
+                    )
+                });
+                tokens
+                    .iter()
+                    .filter(|token| {
+                        !(boxed
+                            && other_text
+                            && matches!(token.kind, crate::ui::ResolvedTokenKind::Workspace(_)))
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .collect()
     };
     for (index, tokens) in rows.iter().take(rect.height as usize).enumerate() {
         let indent = if index == 0 { 1 } else { 3 };
@@ -379,6 +434,79 @@ fn put_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: 
             cell.set_char(character).set_style(style);
         }
     }
+}
+
+fn register_agent_hit(hits: &mut ShellHitMap, row: &AgentRow, rect: Rect) {
+    if let Some(endpoint_id) = &row.endpoint_id {
+        hits.endpoint_agents
+            .push((rect, endpoint_id.clone(), row.pane_id.clone()));
+    } else {
+        hits.agents.push((rect, row.pane_id.clone()));
+    }
+}
+
+fn agent_card_bg(config: &ClientShellConfig, focused: bool) -> ratatui::style::Color {
+    match (config.agent_card_background, config.agent_card_foreground) {
+        (Some(background), Some(foreground)) => {
+            let amount = if focused { 0.09 } else { 0.035 };
+            let mix = |base: u8, target: u8| {
+                (f32::from(base) + (f32::from(target) - f32::from(base)) * amount).round() as u8
+            };
+            ratatui::style::Color::Rgb(
+                mix(background.r, foreground.r),
+                mix(background.g, foreground.g),
+                mix(background.b, foreground.b),
+            )
+        }
+        _ if focused => config.palette.surface1,
+        _ => config.palette.surface0,
+    }
+}
+
+fn render_group_box(buffer: &mut Buffer, rect: Rect, label: &str, active: bool, palette: &Palette) {
+    if rect.width < 2 || rect.height < 2 {
+        return;
+    }
+    let border = Style::default().fg(if active {
+        palette.accent
+    } else {
+        palette.overlay0
+    });
+    let title = Style::default()
+        .fg(if active {
+            palette.accent
+        } else {
+            palette.subtext0
+        })
+        .add_modifier(Modifier::BOLD);
+    let inner = usize::from(rect.width - 2);
+    let mut top = vec![ratatui::text::Span::styled("╭", border)];
+    let mut used = 0;
+    if !label.is_empty() && inner > 3 {
+        let label = crate::ui::truncate_end(label, inner - 3);
+        used = display_width(&label) + 3;
+        top.push(ratatui::text::Span::styled("─ ", border));
+        top.push(ratatui::text::Span::styled(label, title));
+        top.push(ratatui::text::Span::styled(" ", border));
+    }
+    top.push(ratatui::text::Span::styled(
+        "─".repeat(inner.saturating_sub(used)),
+        border,
+    ));
+    top.push(ratatui::text::Span::styled("╮", border));
+    Paragraph::new(Line::from(top)).render(Rect::new(rect.x, rect.y, rect.width, 1), buffer);
+    for y in rect.y + 1..rect.bottom() - 1 {
+        put_text(buffer, rect.x, y, 1, "│", border);
+        put_text(buffer, rect.right() - 1, y, 1, "│", border);
+    }
+    put_text(
+        buffer,
+        rect.x,
+        rect.bottom() - 1,
+        rect.width,
+        &format!("╰{}╯", "─".repeat(inner)),
+        border,
+    );
 }
 
 fn display_width(text: &str) -> usize {

@@ -364,8 +364,16 @@ impl ClientShellState {
                         }
                     }
                 }
-                RawInputEvent::HostDefaultColor { .. }
-                | RawInputEvent::HostPaletteColors { .. }
+                RawInputEvent::HostDefaultColor {
+                    kind: crate::terminal_theme::DefaultColorKind::Foreground,
+                    color,
+                } => {
+                    if self.host_foreground != Some(color) {
+                        self.host_foreground = Some(color);
+                        outcome.repaint = true;
+                    }
+                }
+                RawInputEvent::HostPaletteColors { .. }
                 | RawInputEvent::HostCellSizeReport { .. }
                 | RawInputEvent::Unsupported => {}
             }

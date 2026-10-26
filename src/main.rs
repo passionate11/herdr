@@ -352,6 +352,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # [ui.sidebar.agents]
 # Blank rows between agent entries. Set to 1 to restore the previous spacing.
 # row_gap = 0
+# Frame agents by space, with untitled subgroups for tabs containing multiple agents.
+# group_boxes = true
+# Tint agent cards and give gaps a half-height card edge when grouped.
+# cards = false
 # rows = [["state_icon", "machine", "workspace", "tab"], ["agent"]]
 # Optional canonical agent IDs replace the default rows for matching agents.
 # [ui.sidebar.agents.rows_by_agent]
@@ -724,7 +728,11 @@ fn main() -> io::Result<()> {
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
         platform::begin_cli_output();
-        println!("herdr {}", crate::build_info::version());
+        println!(
+            "herdr {} (custom {})",
+            crate::build_info::version(),
+            update::CUSTOM_BUILD_ID
+        );
         return Ok(());
     }
 

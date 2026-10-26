@@ -70,9 +70,9 @@ pub(super) fn render_expanded(
         config,
         agent_scroll,
         hits,
-        |row| row.agent.rows.len(),
-        |buffer, rect, row, hits| {
-            super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config);
+        |row| &row.agent,
+        |buffer, rect, row, boxed, cards, hits| {
+            super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config, boxed, cards);
             if row.stale {
                 buffer.set_style(
                     rect,
@@ -104,21 +104,26 @@ impl ClientShellState {
         else {
             return;
         };
-        let heights = rows
-            .iter()
-            .map(|row| row.agent.rows.len().max(1).min(u16::MAX as usize) as u16)
-            .collect::<Vec<_>>();
-        let mut gaps = vec![self.config.agents.row_gap; rows.len()];
-        if let Some(last) = gaps.last_mut() {
-            *last = 0;
-        }
-        self.agent_scroll = super::scroll::list_scroll_start_to_reveal(
-            &heights,
-            &gaps,
+        let body = Rect::new(
+            0,
+            0,
+            self.hits.agent_body.width.max(self.sidebar_width),
             body_height,
-            self.agent_scroll,
-            target,
         );
+        let grouped_view = self
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+            .and_then(|endpoint| endpoint.snapshot.as_deref())
+            .is_none_or(|snapshot| snapshot.agent_view_label.is_none());
+        let geometry = super::agent_sidebar::layout::AgentListGeometry::new(
+            &rows,
+            |row| &row.agent,
+            &self.config,
+            body,
+            grouped_view,
+        );
+        self.agent_scroll = geometry.reveal(self.agent_scroll, target);
     }
 }
 
@@ -166,6 +171,8 @@ fn agent_rows(
         let key = (row.endpoint.endpoint_id.clone(), row.agent.pane_id.clone());
         let mut agent = rendered_rows.remove(&key)?;
         agent.focused &= row.endpoint.endpoint_id == active_endpoint_id;
+        agent.endpoint_id = Some(row.endpoint.endpoint_id.clone());
+        agent.workspace_focused &= row.endpoint.endpoint_id == active_endpoint_id;
         Some(EndpointAgentRow {
             endpoint_id: row.endpoint.endpoint_id.clone(),
             machine_label: row.endpoint.label.to_owned(),

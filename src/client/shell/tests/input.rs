@@ -1,6 +1,61 @@
 use super::*;
 
 #[test]
+fn host_default_colors_repaint_and_reach_local_agent_card_config() {
+    use crate::terminal_theme::{DefaultColorKind, RgbColor};
+
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.theme_runtime.auto_switch = false;
+    let mut state = ClientShellState::new(config);
+    assert_eq!(state.config.agent_card_background, None);
+    assert_eq!(state.config.agent_card_foreground, None);
+
+    let colors = b"\x1b]10;rgb:cccc/aaaa/8888\x1b\\\x1b]11;rgb:1111/2222/3333\x1b\\";
+    let outcome = state.handle_input_bytes(colors);
+    assert!(outcome.repaint);
+    assert_eq!(outcome.requests.len(), 2);
+    let background = RgbColor {
+        r: 17,
+        g: 34,
+        b: 51,
+    };
+    let foreground = RgbColor {
+        r: 204,
+        g: 170,
+        b: 136,
+    };
+    assert_eq!(state.host_background, Some(background));
+    assert_eq!(state.host_foreground, Some(foreground));
+    state.compose(106, 20).expect("unavailable shell frame");
+    assert_eq!(state.config.agent_card_background, Some(background));
+    assert_eq!(state.config.agent_card_foreground, Some(foreground));
+
+    let repeated = state.handle_input_bytes(colors);
+    assert!(!repeated.repaint);
+    let changed = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
+        kind: DefaultColorKind::Foreground,
+        color: RgbColor {
+            r: 240,
+            g: 241,
+            b: 242,
+        },
+    }]);
+    assert!(changed.repaint);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("connected shell frame");
+    assert_eq!(state.config.agent_card_background, Some(background));
+    assert_eq!(
+        state.config.agent_card_foreground,
+        Some(RgbColor {
+            r: 240,
+            g: 241,
+            b: 242
+        })
+    );
+}
+
+#[test]
 fn host_appearance_prefers_explicit_reports_over_background_inference() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.config.theme_runtime.auto_switch = true;

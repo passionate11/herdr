@@ -954,7 +954,9 @@ fn sidebar_scrollbars_use_proportional_shared_geometry_and_drag() {
             focused: false,
         });
     }
-    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut config = Config::default();
+    config.ui.sidebar.agents.group_boxes = false;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
     state.set_snapshot(Box::new(projected));
     state.set_pane_surface(surface());
     state.compose(106, 20).expect("overflowing sidebars");

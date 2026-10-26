@@ -26,6 +26,8 @@ const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
 const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
+pub(crate) const CUSTOM_BUILD_ID: &str = "grouped.1";
+const CUSTOM_UPDATE_COMMAND: &str = "herdr-custom-update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
 const MISE_UPDATE_COMMAND: &str = "mise upgrade herdr";
 const NIX_UPDATE_COMMAND: &str = "update through Nix";
@@ -1882,19 +1884,14 @@ fn print_running_session_update_outcomes(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn update_install_command() -> &'static str {
-    if is_homebrew_managed_install() {
-        HOMEBREW_UPDATE_COMMAND
-    } else if is_mise_managed_install() {
-        MISE_UPDATE_COMMAND
-    } else if is_nix_managed_install() {
-        NIX_UPDATE_COMMAND
-    } else {
-        HERDR_UPDATE_COMMAND
-    }
+    CUSTOM_UPDATE_COMMAND
 }
 
 pub(crate) fn update_install_instruction(install_command: &str) -> String {
     match install_command {
+        CUSTOM_UPDATE_COMMAND => {
+            "run `herdr-custom-update` to build and verify the next custom version".to_string()
+        }
         HERDR_UPDATE_COMMAND => {
             "detach, run `herdr update`, then run Herdr again to reconnect".to_string()
         }
@@ -2107,6 +2104,7 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 
 /// Manual self-update command (`herdr update`).
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+    reject_upstream_update_for_custom_build()?;
     let channel = UpdateChannel::configured();
 
     if is_homebrew_managed_install() {
@@ -2226,6 +2224,12 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
     }
 
     Ok(release.version)
+}
+
+fn reject_upstream_update_for_custom_build() -> Result<(), String> {
+    Err(format!(
+        "upstream self-update is disabled for custom build {CUSTOM_BUILD_ID}; run `{CUSTOM_UPDATE_COMMAND}` to preserve the local sidebar changes"
+    ))
 }
 
 fn print_saved_machine_update_notice() {
@@ -2446,7 +2450,7 @@ fn auto_update_homebrew(events: tokio::sync::mpsc::Sender<crate::events::AppEven
 
     let _ = events.blocking_send(crate::events::AppEvent::UpdateReady {
         version: version.to_string(),
-        install_command: HOMEBREW_UPDATE_COMMAND.to_string(),
+        install_command: update_install_command().to_string(),
     });
 }
 
@@ -2954,6 +2958,11 @@ mod tests {
 
     #[test]
     fn update_install_instruction_distinguishes_install_from_restart() {
+        assert_eq!(update_install_command(), CUSTOM_UPDATE_COMMAND);
+        assert_eq!(
+            update_install_instruction(CUSTOM_UPDATE_COMMAND),
+            "run `herdr-custom-update` to build and verify the next custom version"
+        );
         assert_eq!(
             update_install_instruction(HERDR_UPDATE_COMMAND),
             "detach, run `herdr update`, then run Herdr again to reconnect"
@@ -2966,6 +2975,17 @@ mod tests {
             update_install_instruction(MISE_UPDATE_COMMAND),
             "detach, run `mise upgrade herdr`, then run Herdr again to reconnect"
         );
+    }
+
+    #[test]
+    fn custom_build_rejects_stock_install_before_update_work() {
+        for live_handoff in [false, true] {
+            let error = self_update(SelfUpdateOptions { live_handoff })
+                .expect_err("custom builds must preserve their local changes");
+            assert!(error.contains(CUSTOM_BUILD_ID));
+            assert!(error.contains(CUSTOM_UPDATE_COMMAND));
+            assert!(error.contains("upstream self-update is disabled"));
+        }
     }
 
     #[test]

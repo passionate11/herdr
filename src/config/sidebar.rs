@@ -427,6 +427,10 @@ pub struct AgentsSidebarConfig {
     #[serde(default, deserialize_with = "deserialize_rows_by_agent")]
     pub rows_by_agent: BTreeMap<String, AgentSidebarRows>,
     pub row_gap: u16,
+    /// Frame agents by workspace and add an untitled subgroup for split tabs.
+    pub group_boxes: bool,
+    /// Tint agent cards and use the first gap row as a half-height card edge.
+    pub cards: bool,
 }
 
 impl AgentsSidebarConfig {
@@ -451,6 +455,8 @@ impl Default for AgentsSidebarConfig {
             ],
             rows_by_agent: BTreeMap::new(),
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
+            group_boxes: true,
+            cards: false,
         }
     }
 }
@@ -503,6 +509,8 @@ mod tests {
         );
         assert!(config.agents.rows_by_agent.is_empty());
         assert_eq!(config.agents.row_gap, 0);
+        assert!(config.agents.group_boxes);
+        assert!(!config.agents.cards);
         assert_eq!(
             config.spaces.rows,
             vec![
@@ -511,6 +519,28 @@ mod tests {
             ]
         );
         assert_eq!(config.spaces.row_gap, 0);
+    }
+
+    #[test]
+    fn parses_custom_group_boxes_and_existing_single_row_cards() {
+        let config: crate::config::Config = toml::from_str(
+            r#"
+[ui.sidebar.agents]
+rows = [["state_icon", "workspace", "tab", "agent"]]
+row_gap = 1
+cards = true
+"#,
+        )
+        .expect("existing local sidebar config");
+        assert!(config.ui.sidebar.agents.group_boxes);
+        assert!(config.ui.sidebar.agents.cards);
+        assert_eq!(config.ui.sidebar.agents.rows.len(), 1);
+        assert_eq!(config.ui.sidebar.agents.row_gap, 1);
+
+        let disabled: AgentsSidebarConfig =
+            toml::from_str("group_boxes = false\n").expect("disabled group boxes");
+        assert!(!disabled.group_boxes);
+        assert!(!disabled.cards);
     }
 
     #[test]
