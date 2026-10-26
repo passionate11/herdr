@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+root="${HERDR_CUSTOM_INSTALL_ROOT:-$HOME/.local/share/herdr-custom}"
+binary="$root/current/herdr"
+if [ ! -x "$binary" ]; then
+    echo "No active custom Herdr build. Run herdr-custom-update first." >&2
+    exit 1
+fi
+exec "$binary" "$@"

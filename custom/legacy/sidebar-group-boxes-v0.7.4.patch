@@ -1,0 +1,1179 @@
+diff --git a/src/app/input/sidebar.rs b/src/app/input/sidebar.rs
+index 9ae3076..f18d09c 100644
+--- a/src/app/input/sidebar.rs
++++ b/src/app/input/sidebar.rs
+@@ -447,23 +447,17 @@ impl AppState {
+             return None;
+         }
+ 
+-        let mut row_y = body.y;
+-        let body_bottom = body.y + body.height;
+         let entries = crate::ui::agent_panel_entries(self);
+-        for (index, detail) in entries.iter().enumerate().skip(self.agent_panel_scroll) {
+-            let height = crate::ui::agent_entry_height_in_body(self, detail, body.height);
+-            if row_y.saturating_add(height) > body_bottom {
+-                break;
+-            }
+-            if row >= row_y && row < row_y.saturating_add(height) {
+-                return Some((detail.ws_idx, detail.tab_idx, detail.pane_id));
+-            }
+-            row_y = row_y
+-                .saturating_add(height)
+-                .saturating_add(crate::ui::agent_entry_gap(self, index, entries.len()))
+-                .min(body_bottom);
+-        }
+-        None
++        let layout = crate::ui::agent_panel_layout(self, &entries, body, self.agent_panel_scroll);
++        layout
++            .entries
++            .into_iter()
++            .chain(layout.card_tails)
++            .find(|(_, rect)| row >= rect.y && row < rect.y + rect.height)
++            .map(|(index, _)| {
++                let detail = &entries[index];
++                (detail.ws_idx, detail.tab_idx, detail.pane_id)
++            })
+     }
+ }
+ 
+@@ -694,6 +688,7 @@ mod tests {
+     #[test]
+     fn per_agent_row_heights_preserve_card_gaps_and_trailing_mouse_targets() {
+         let mut app = app_for_mouse_test();
++        app.state.sidebar_agents.group_boxes = false;
+         let first = Workspace::test_new("one");
+         let first_pane = first.tabs[0].root_pane;
+         let second = Workspace::test_new("two");
+@@ -769,9 +764,235 @@ mod tests {
+         assert_eq!(app.state.agent_panel_scroll, 0);
+     }
+ 
++    #[test]
++    fn boxed_agent_rows_are_click_targets_and_box_borders_are_not() {
++        let mut app = app_for_mouse_test();
++        app.state.view.sidebar_rect = Rect::new(0, 0, 26, 40);
++        let first = Workspace::test_new("one");
++        let first_pane = first.tabs[0].root_pane;
++        let second = Workspace::test_new("two");
++        let second_pane = second.tabs[0].root_pane;
++        app.state.workspaces = vec![first, second];
++        app.state.ensure_test_terminals();
++        for (ws_idx, pane_id, agent) in
++            [(0, first_pane, Agent::Pi), (1, second_pane, Agent::Claude)]
++        {
++            let terminal_id = app.state.workspaces[ws_idx].tabs[0].panes[&pane_id]
++                .attached_terminal_id
++                .clone();
++            app.state
++                .terminals
++                .get_mut(&terminal_id)
++                .unwrap()
++                .detected_agent = Some(agent);
++        }
++        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        assert!(app.state.sidebar_agents.group_boxes);
++        let detail_area = app.state.agent_panel_rect();
++        let metrics = crate::ui::agent_panel_scroll_metrics(&app.state, detail_area);
++        let body = crate::ui::agent_panel_body_rect(
++            detail_area,
++            crate::ui::should_show_scrollbar(metrics),
++        );
++
++        // ╭ one ╮ / pi / ╰─╯ / ╭ two ╮ / claude / ╰─╯
++        assert_eq!(app.state.agent_detail_target_at(body.y), None);
++        assert_eq!(
++            app.state.agent_detail_target_at(body.y + 1),
++            Some((0, 0, first_pane))
++        );
++        assert_eq!(app.state.agent_detail_target_at(body.y + 2), None);
++        assert_eq!(app.state.agent_detail_target_at(body.y + 3), None);
++        assert_eq!(
++            app.state.agent_detail_target_at(body.y + 4),
++            Some((1, 0, second_pane))
++        );
++        assert_eq!(app.state.agent_detail_target_at(body.y + 5), None);
++    }
++
++    #[test]
++    fn agent_card_edges_select_the_card_above() {
++        let mut app = app_for_mouse_test();
++        app.state.view.sidebar_rect = Rect::new(0, 0, 26, 40);
++        let mut workspace = Workspace::test_new("one");
++        workspace.test_add_tab(None);
++        let panes = [workspace.tabs[0].root_pane, workspace.tabs[1].root_pane];
++        app.state.workspaces = vec![workspace];
++        app.state.ensure_test_terminals();
++        for (tab_idx, agent) in [(0, Agent::Pi), (1, Agent::Claude)] {
++            let tab = &app.state.workspaces[0].tabs[tab_idx];
++            let terminal_id = tab.panes[&tab.root_pane].attached_terminal_id.clone();
++            app.state
++                .terminals
++                .get_mut(&terminal_id)
++                .unwrap()
++                .detected_agent = Some(agent);
++        }
++        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        app.state.sidebar_agents.cards = true;
++        app.state.sidebar_agents.row_gap = 1;
++        let detail_area = app.state.agent_panel_rect();
++        let metrics = crate::ui::agent_panel_scroll_metrics(&app.state, detail_area);
++        let body = crate::ui::agent_panel_body_rect(
++            detail_area,
++            crate::ui::should_show_scrollbar(metrics),
++        );
++
++        // ╭ one ╮ / pi / ▀ edge / claude / ╰─╯
++        assert_eq!(app.state.agent_detail_target_at(body.y), None);
++        assert_eq!(
++            app.state.agent_detail_target_at(body.y + 1),
++            Some((0, 0, panes[0]))
++        );
++        assert_eq!(
++            app.state.agent_detail_target_at(body.y + 2),
++            Some((0, 0, panes[0]))
++        );
++        assert_eq!(
++            app.state.agent_detail_target_at(body.y + 3),
++            Some((0, 1, panes[1]))
++        );
++        assert_eq!(app.state.agent_detail_target_at(body.y + 4), None);
++    }
++
++    #[test]
++    fn clicking_split_agent_cards_focuses_their_panes_and_skips_borders() {
++        let mut app = app_for_mouse_test();
++        app.state.view.sidebar_rect = Rect::new(0, 0, 26, 40);
++        let mut workspace = Workspace::test_new("one");
++        let first_pane = workspace.tabs[0].root_pane;
++        let second_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
++        let other_tab = workspace.test_add_tab(Some("other"));
++        workspace.active_tab = other_tab;
++        app.state.workspaces = vec![workspace];
++        app.state.ensure_test_terminals();
++        for (pane_id, agent) in [(first_pane, Agent::Pi), (second_pane, Agent::Claude)] {
++            let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
++                .attached_terminal_id
++                .clone();
++            app.state
++                .terminals
++                .get_mut(&terminal_id)
++                .unwrap()
++                .detected_agent = Some(agent);
++        }
++        app.state.active = Some(0);
++        app.state.selected = 0;
++        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        app.state.sidebar_agents.cards = true;
++        app.state.sidebar_agents.row_gap = 1;
++        let area = app.state.agent_panel_rect();
++        let metrics = crate::ui::agent_panel_scroll_metrics(&app.state, area);
++        let body =
++            crate::ui::agent_panel_body_rect(area, crate::ui::should_show_scrollbar(metrics));
++        let entries = crate::ui::agent_panel_entries(&app.state);
++        let layout = crate::ui::agent_panel_layout(&app.state, &entries, body, 0);
++
++        assert_eq!(layout.split_boxes.len(), 1);
++        let split_box = layout.split_boxes[0].rect;
++        for row in [split_box.y, split_box.y + split_box.height - 1] {
++            assert_eq!(app.state.agent_detail_target_at(row), None);
++            app.handle_mouse(mouse(
++                MouseEventKind::Down(MouseButton::Left),
++                split_box.x + 1,
++                row,
++            ));
++            assert_eq!(app.state.workspaces[0].active_tab, other_tab);
++        }
++
++        for (index, rect) in &layout.entries {
++            let pane_id = entries[*index].pane_id;
++            assert_eq!(
++                app.state.agent_detail_target_at(rect.y),
++                Some((0, 0, pane_id))
++            );
++            app.handle_mouse(mouse(
++                MouseEventKind::Down(MouseButton::Left),
++                rect.x + 1,
++                rect.y,
++            ));
++            assert_eq!(app.state.workspaces[0].active_tab, 0);
++            assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), pane_id);
++        }
++
++        assert_eq!(layout.card_tails.len(), 1);
++        let (index, tail) = layout.card_tails[0];
++        app.handle_mouse(mouse(
++            MouseEventKind::Down(MouseButton::Left),
++            tail.x + 1,
++            tail.y,
++        ));
++        assert_eq!(
++            app.state.workspaces[0].tabs[0].layout.focused(),
++            entries[index].pane_id
++        );
++    }
++
++    #[test]
++    fn clicking_scrolled_split_agent_group_keeps_the_correct_pane_target() {
++        let mut app = app_for_mouse_test();
++        let mut workspace = Workspace::test_new("one");
++        let first_pane = workspace.tabs[0].root_pane;
++        workspace.test_split(ratatui::layout::Direction::Horizontal);
++        workspace.test_split(ratatui::layout::Direction::Vertical);
++        workspace.tabs[0].layout.focus_pane(first_pane);
++        app.state.workspaces = vec![workspace];
++        app.state.ensure_test_terminals();
++        let pane_ids = app.state.workspaces[0].tabs[0].layout.pane_ids();
++        for pane_id in pane_ids {
++            let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
++                .attached_terminal_id
++                .clone();
++            app.state
++                .terminals
++                .get_mut(&terminal_id)
++                .unwrap()
++                .detected_agent = Some(Agent::Claude);
++        }
++        app.state.active = Some(0);
++        app.state.selected = 0;
++        app.state.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        app.state.sidebar_agents.cards = true;
++        app.state.sidebar_agents.row_gap = 1;
++        let area = app.state.agent_panel_rect();
++        assert!(
++            crate::ui::agent_panel_scroll_metrics(&app.state, area).max_offset_from_bottom >= 1
++        );
++        app.state.agent_panel_scroll = 1;
++        let metrics = crate::ui::agent_panel_scroll_metrics(&app.state, area);
++        let body =
++            crate::ui::agent_panel_body_rect(area, crate::ui::should_show_scrollbar(metrics));
++        let entries = crate::ui::agent_panel_entries(&app.state);
++        let layout = crate::ui::agent_panel_layout(&app.state, &entries, body, 1);
++
++        assert_eq!(layout.split_boxes.len(), 1);
++        let split_box = layout.split_boxes[0].rect;
++        assert_eq!(split_box.y, body.y + 1);
++        assert_eq!(app.state.agent_detail_target_at(split_box.y), None);
++        assert_eq!(
++            app.state
++                .agent_detail_target_at(split_box.y + split_box.height - 1),
++            None
++        );
++        let (index, rect) = layout.entries[0];
++        assert_eq!(index, 1);
++        let target = entries[index].pane_id;
++        assert_ne!(target, first_pane);
++        app.handle_mouse(mouse(
++            MouseEventKind::Down(MouseButton::Left),
++            rect.x + 1,
++            rect.y,
++        ));
++
++        assert_eq!(app.state.workspaces[0].active_tab, 0);
++        assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), target);
++        assert_eq!(app.state.mode, Mode::Terminal);
++    }
++
+     #[test]
+     fn clicking_all_workspaces_agent_row_switches_to_correct_workspace() {
+         let mut app = app_for_mouse_test();
++        app.state.sidebar_agents.group_boxes = false;
+         let first = Workspace::test_new("one");
+         let first_pane = first.tabs[0].root_pane;
+ 
+diff --git a/src/config/sidebar.rs b/src/config/sidebar.rs
+index e583f5a..623e37a 100644
+--- a/src/config/sidebar.rs
++++ b/src/config/sidebar.rs
+@@ -200,6 +200,11 @@ pub struct AgentsSidebarConfig {
+     #[serde(default, deserialize_with = "deserialize_rows_by_agent")]
+     pub rows_by_agent: BTreeMap<String, AgentSidebarRows>,
+     pub row_gap: u16,
++    /// Frame each space's agents in a titled box when the panel is grouped by space.
++    pub group_boxes: bool,
++    /// Inside space boxes, draw each agent on a tinted card; the first `row_gap` row
++    /// becomes a half-height card edge so the visible gap is half a row.
++    pub cards: bool,
+ }
+ 
+ impl AgentsSidebarConfig {
+@@ -223,6 +228,8 @@ impl Default for AgentsSidebarConfig {
+             ],
+             rows_by_agent: BTreeMap::new(),
+             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
++            group_boxes: true,
++            cards: false,
+         }
+     }
+ }
+@@ -274,6 +281,8 @@ mod tests {
+         );
+         assert!(config.agents.rows_by_agent.is_empty());
+         assert_eq!(config.agents.row_gap, 0);
++        assert!(config.agents.group_boxes);
++        assert!(!config.agents.cards);
+         assert_eq!(
+             config.spaces.rows,
+             vec![
+diff --git a/src/main.rs b/src/main.rs
+index 1e44b05..811d2eb 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -316,6 +316,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
+ # [ui.sidebar.agents]
+ # Blank rows between agent entries. Set to 1 to restore the previous spacing.
+ # row_gap = 0
++# Frame each space's agents in a titled box when the panel is grouped by space.
++# group_boxes = true
++# Inside space boxes, draw agents on tinted cards with half-row gaps (uses row_gap rows).
++# cards = false
+ # rows = [["state_icon", "workspace", "tab"], ["agent"]]
+ # Optional canonical agent IDs replace the default rows for matching agents.
+ # [ui.sidebar.agents.rows_by_agent]
+diff --git a/src/ui.rs b/src/ui.rs
+index 8557498..cd58010 100644
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -72,7 +72,7 @@ pub(crate) use self::{
+         SETTINGS_POPUP_WIDTH,
+     },
+     sidebar::{
+-        agent_entry_gap, agent_entry_height_in_body, agent_panel_body_rect, agent_panel_entries,
++        agent_panel_body_rect, agent_panel_entries, agent_panel_layout,
+         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
+         agent_panel_toggle_rect, collapsed_sidebar_sections, collapsed_sidebar_toggle_rect,
+         compute_workspace_card_areas, expanded_sidebar_sections, expanded_sidebar_toggle_rect,
+diff --git a/src/ui/panes.rs b/src/ui/panes.rs
+index ae4cc13..ab985ba 100644
+--- a/src/ui/panes.rs
++++ b/src/ui/panes.rs
+@@ -816,7 +816,7 @@ fn render_selection_highlight(
+     }
+ }
+ 
+-type Rgb = (u8, u8, u8);
++pub(super) type Rgb = (u8, u8, u8);
+ 
+ fn automatic_selection_style(
+     p: &Palette,
+@@ -848,7 +848,7 @@ fn selection_palette_background(p: &Palette) -> Color {
+     }
+ }
+ 
+-fn terminal_theme_to_rgb(color: crate::terminal_theme::RgbColor) -> Rgb {
++pub(super) fn terminal_theme_to_rgb(color: crate::terminal_theme::RgbColor) -> Rgb {
+     (color.r, color.g, color.b)
+ }
+ 
+@@ -864,7 +864,7 @@ fn selection_fg_for_bg(bg: Color, p: &Palette) -> Color {
+         .unwrap_or_else(|| panel_contrast_fg(p))
+ }
+ 
+-fn mix_rgb(base: Rgb, target: Rgb, amount: f32) -> Rgb {
++pub(super) fn mix_rgb(base: Rgb, target: Rgb, amount: f32) -> Rgb {
+     fn channel(base: u8, target: u8, amount: f32) -> u8 {
+         (f32::from(base) + (f32::from(target) - f32::from(base)) * amount).round() as u8
+     }
+diff --git a/src/ui/sidebar.rs b/src/ui/sidebar.rs
+index ebe7d0a..162f33e 100644
+--- a/src/ui/sidebar.rs
++++ b/src/ui/sidebar.rs
+@@ -2,7 +2,7 @@ mod tokens;
+ 
+ use ratatui::{
+     layout::{Alignment, Rect},
+-    style::{Modifier, Style},
++    style::{Color, Modifier, Style},
+     text::{Line, Span},
+     widgets::Paragraph,
+     Frame,
+@@ -566,42 +566,203 @@ pub(crate) fn agent_entry_gap(app: &AppState, entry_idx: usize, entry_count: usi
+     }
+ }
+ 
+-fn agent_panel_visible_count_from(app: &AppState, area: Rect, scroll: usize) -> usize {
+-    let body = agent_panel_body_rect(area, false);
+-    if body.width == 0 || body.height == 0 {
+-        return 0;
+-    }
++/// Visible agent entries for one scroll position, plus their space and split-tab boxes.
++#[derive(Debug, Default)]
++pub(crate) struct AgentPanelLayout {
++    /// Index into the agent panel entries and the rect that entry's rows occupy.
++    pub entries: Vec<(usize, Rect)>,
++    pub boxes: Vec<AgentGroupBox>,
++    pub split_boxes: Vec<AgentGroupBox>,
++    /// Whether entries are drawn as tinted cards.
++    pub cards: bool,
++    /// The half-height lower edge row drawn under each card, keyed by entry index.
++    pub card_tails: Vec<(usize, Rect)>,
++}
+ 
+-    let mut used_rows = 0u16;
+-    let mut visible = 0usize;
+-    let entries = agent_panel_entries(app);
+-    for (index, entry) in entries.iter().enumerate().skip(scroll) {
+-        let height = agent_entry_height_in_body(app, entry, body.height);
+-        if used_rows.saturating_add(height) > body.height {
++#[derive(Debug, PartialEq, Eq)]
++pub(crate) struct AgentGroupBox {
++    pub ws_idx: usize,
++    pub label: String,
++    pub rect: Rect,
++}
++
++fn agent_panel_group_boxes(app: &AppState, body: Rect) -> bool {
++    app.sidebar_agents.group_boxes
++        && matches!(app.agent_panel_sort, AgentPanelSort::Spaces)
++        && body.width >= 5
++        && body.height >= 3
++}
++
++pub(crate) fn agent_panel_layout(
++    app: &AppState,
++    entries: &[AgentPanelEntry],
++    body: Rect,
++    scroll: usize,
++) -> AgentPanelLayout {
++    let mut layout = AgentPanelLayout::default();
++    if body.width == 0 || body.height == 0 {
++        return layout;
++    }
++
++    let boxed = agent_panel_group_boxes(app, body);
++    let inset = u16::from(boxed);
++    // Boxes leave one blank column so their right edge does not double up with the sidebar divider.
++    let box_width = body.width.saturating_sub(inset);
++    let inner_width = box_width.saturating_sub(2 * inset);
++    let cards = boxed && app.sidebar_agents.cards;
++    layout.cards = cards;
++    let same_tab = |left: &AgentPanelEntry, right: &AgentPanelEntry| {
++        left.ws_idx == right.ws_idx && left.tab_idx == right.tab_idx
++    };
++    // Count visible agents, not panes: a split with only one agent needs no subgroup.
++    let split_entries: Vec<bool> = entries
++        .iter()
++        .enumerate()
++        .map(|(index, entry)| {
++            boxed
++                && inner_width >= 7
++                && body.height >= 5
++                && (index
++                    .checked_sub(1)
++                    .is_some_and(|prev| same_tab(&entries[prev], entry))
++                    || entries
++                        .get(index + 1)
++                        .is_some_and(|next| same_tab(entry, next)))
++        })
++        .collect();
++    // Cards keep a column of the box background on each side when there is room.
++    let card_margin = u16::from(cards && inner_width >= 10);
++    let content_height = body.height.saturating_sub(2 * inset);
++    let body_bottom = body.y + body.height;
++    let mut row_y = body.y;
++    let mut content_bottom = body.y;
++    // Entry index that opened the current box and the row of its top border.
++    let mut open_box: Option<(usize, u16)> = None;
++    let mut open_split: Option<(usize, u16)> = None;
++    // A card's half-height edge fills the gap before the next card in the same box, so it
++    // is only placed once that card fits; a box cut off by the viewport closes right under it.
++    let mut pending_tail: Option<(usize, Rect)> = None;
++    let close_box = |layout: &mut AgentPanelLayout, (start, top): (usize, u16), bottom: u16| {
++        layout.boxes.push(AgentGroupBox {
++            ws_idx: entries[start].ws_idx,
++            label: entries[start].primary_label.clone(),
++            rect: Rect::new(body.x, top, box_width, bottom.saturating_sub(top) + 1),
++        });
++    };
++    let close_split = |layout: &mut AgentPanelLayout, (start, top): (usize, u16), bottom: u16| {
++        layout.split_boxes.push(AgentGroupBox {
++            ws_idx: entries[start].ws_idx,
++            label: String::new(),
++            rect: Rect::new(
++                body.x + 2,
++                top,
++                inner_width - 2,
++                bottom.saturating_sub(top) + 1,
++            ),
++        });
++    };
++    for index in scroll..entries.len() {
++        let entry = &entries[index];
++        // A box scrolled partway out of view still gets a top border at the viewport edge.
++        let starts_box = boxed && (index == scroll || entries[index - 1].ws_idx != entry.ws_idx);
++        let ends_box = boxed
++            && entries
++                .get(index + 1)
++                .is_none_or(|next| next.ws_idx != entry.ws_idx);
++        let split = split_entries[index];
++        let starts_split = split && (index == scroll || !same_tab(&entries[index - 1], entry));
++        let ends_split = split
++            && entries
++                .get(index + 1)
++                .is_none_or(|next| !same_tab(entry, next));
++        let split_top = row_y.saturating_add(u16::from(starts_box));
++        let content_y = split_top.saturating_add(u16::from(starts_split));
++        let height = agent_entry_height_in_body(
++            app,
++            entry,
++            content_height.saturating_sub(2 * u16::from(split)),
++        );
++        // Reserve both bottom borders when the viewport cuts through a split group.
++        if content_y
++            .saturating_add(height)
++            .saturating_add(inset + u16::from(split))
++            > body_bottom
++        {
+             break;
+         }
+-        used_rows = used_rows.saturating_add(height);
+-        visible += 1;
+-        used_rows = used_rows
+-            .saturating_add(agent_entry_gap(app, index, entries.len()))
+-            .min(body.height);
++        layout.card_tails.extend(pending_tail.take());
++        if starts_box {
++            open_box = Some((index, row_y));
++        }
++        if starts_split {
++            open_split = Some((index, split_top));
++        }
++        let entry_inset = if split { 2 } else { card_margin };
++        let rect = Rect::new(
++            body.x + inset + entry_inset,
++            content_y,
++            inner_width - 2 * entry_inset,
++            height,
++        );
++        layout.entries.push((index, rect));
++        row_y = content_y + height;
++        if ends_split {
++            if let Some(open) = open_split.take() {
++                close_split(&mut layout, open, row_y);
++            }
++            row_y += 1;
++        }
++        content_bottom = row_y;
++        if ends_box {
++            if let Some(open) = open_box.take() {
++                close_box(&mut layout, open, row_y);
++            }
++            row_y += 1;
++        } else {
++            // A subgroup border already separates it from adjacent tabs.
++            let crosses_split =
++                ends_split || (!split && split_entries.get(index + 1) == Some(&true));
++            let gap = if boxed && crosses_split {
++                0
++            } else if boxed {
++                app.sidebar_agents.row_gap
++            } else {
++                agent_entry_gap(app, index, entries.len())
++            };
++            if cards && gap > 0 {
++                pending_tail = Some((index, Rect::new(rect.x, row_y, rect.width, 1)));
++            }
++            row_y = row_y.saturating_add(gap).min(body_bottom);
++        }
+     }
+-    visible
++    if let Some(open) = open_split {
++        close_split(&mut layout, open, content_bottom);
++        content_bottom += 1;
++    }
++    if let Some(open) = open_box {
++        close_box(&mut layout, open, content_bottom);
++    }
++    layout
++}
++
++fn agent_panel_visible_count_from(app: &AppState, area: Rect, scroll: usize) -> usize {
++    let body = agent_panel_body_rect(area, false);
++    agent_panel_layout(app, &agent_panel_entries(app), body, scroll)
++        .entries
++        .len()
+ }
+ 
+ fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
+     let body = agent_panel_body_rect(area, false);
+     let entries = agent_panel_entries(app);
+-    let mut used_rows = 0u16;
+     let mut start = entries.len();
+-    for (index, entry) in entries.iter().enumerate().rev() {
+-        let gap = agent_entry_gap(app, index, entries.len());
+-        let needed = agent_entry_height_in_body(app, entry, body.height).saturating_add(gap);
+-        if used_rows.saturating_add(needed) > body.height {
+-            break;
+-        }
+-        used_rows = used_rows.saturating_add(needed);
+-        start = index;
++    while start > 0
++        && agent_panel_layout(app, &entries, body, start - 1)
++            .entries
++            .len()
++            == entries.len() - (start - 1)
++    {
++        start -= 1;
+     }
+     start.min(entries.len().saturating_sub(1))
+ }
+@@ -1311,18 +1472,38 @@ fn render_agent_detail(
+         return;
+     }
+ 
+-    let mut row_y = body.y;
+-    let body_bottom = body.y + body.height;
+-    for (index, detail) in details.iter().enumerate().skip(app.agent_panel_scroll) {
++    let layout = agent_panel_layout(app, &details, body, app.agent_panel_scroll);
++    for group in &layout.boxes {
++        render_agent_group_box(frame, group, app.active == Some(group.ws_idx), p);
++    }
++    for group in &layout.split_boxes {
++        render_agent_group_box(frame, group, false, p);
++    }
++    let boxed = !layout.boxes.is_empty();
++    for (index, tail) in &layout.card_tails {
++        let detail = &details[*index];
++        let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
++        frame.render_widget(
++            Paragraph::new(Span::styled(
++                "▀".repeat(tail.width as usize),
++                Style::default().fg(agent_card_bg(app, is_active)),
++            )),
++            *tail,
++        );
++    }
++    for (index, rect) in layout.entries {
++        let detail = &details[index];
+         let label_color = state_label_color(detail.state, detail.seen, p);
+-        let rows = resolved_agent_rows(app, detail);
+-        let height = (rows.len().max(1) as u16).min(body.height);
+-        if row_y.saturating_add(height) > body_bottom {
+-            break;
++        let mut rows = resolved_agent_rows(app, detail);
++        if boxed {
++            rows = without_boxed_workspace(rows);
+         }
++        let height = rect.height;
+ 
+         let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
+-        let row_style = if is_active {
++        let row_style = if layout.cards {
++            Style::default().bg(agent_card_bg(app, is_active))
++        } else if is_active {
+             Style::default().bg(p.surface_dim)
+         } else {
+             Style::default()
+@@ -1350,18 +1531,14 @@ fn render_agent_detail(
+                 agent_style,
+                 agent_style,
+                 p,
+-                body.width
++                rect.width
+                     .saturating_sub(if row_index == 0 { 1 } else { 3 }) as usize,
+             ));
+             frame.render_widget(
+                 Paragraph::new(Line::from(spans)).style(row_style),
+-                Rect::new(body.x, row_y + row_index as u16, body.width, 1),
++                Rect::new(rect.x, rect.y + row_index as u16, rect.width, 1),
+             );
+         }
+-        row_y = row_y
+-            .saturating_add(height)
+-            .saturating_add(agent_entry_gap(app, index, details.len()))
+-            .min(body_bottom);
+     }
+ 
+     if let Some(track) = scrollbar_rect {
+@@ -1369,6 +1546,99 @@ fn render_agent_detail(
+     }
+ }
+ 
++/// Cards sit a small step from the host terminal background toward its foreground,
++/// so they stay subtle on any terminal theme; the focused agent's card is a step brighter.
++fn agent_card_bg(app: &AppState, active: bool) -> Color {
++    let theme = app.host_terminal_theme;
++    match (theme.background, theme.foreground) {
++        (Some(background), Some(foreground)) => {
++            let (r, g, b) = super::panes::mix_rgb(
++                super::panes::terminal_theme_to_rgb(background),
++                super::panes::terminal_theme_to_rgb(foreground),
++                if active { 0.09 } else { 0.035 },
++            );
++            Color::Rgb(r, g, b)
++        }
++        _ if active => app.palette.surface1,
++        _ => app.palette.surface0,
++    }
++}
++
++/// The box title already names the space, so rows drop the workspace token
++/// unless it is the only text left on the row.
++fn without_boxed_workspace(rows: Vec<Vec<ResolvedToken>>) -> Vec<Vec<ResolvedToken>> {
++    rows.into_iter()
++        .map(|row| {
++            let has_other_text = row.iter().any(|token| {
++                !matches!(
++                    token,
++                    ResolvedToken::StateIcon | ResolvedToken::Workspace(_)
++                )
++            });
++            if has_other_text {
++                row.into_iter()
++                    .filter(|token| !matches!(token, ResolvedToken::Workspace(_)))
++                    .collect()
++            } else {
++                row
++            }
++        })
++        .collect()
++}
++
++fn render_agent_group_box(frame: &mut Frame, group: &AgentGroupBox, active: bool, p: &Palette) {
++    let rect = group.rect;
++    if rect.width < 2 || rect.height < 2 {
++        return;
++    }
++
++    let border_style = Style::default().fg(if active { p.accent } else { p.overlay0 });
++    let title_style = if active {
++        Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
++    } else {
++        Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
++    };
++    let inner_width = (rect.width - 2) as usize;
++
++    let mut top = vec![Span::styled("╭", border_style)];
++    let mut used = 0;
++    // "─ " before the title and " " after it.
++    let title_budget = inner_width.saturating_sub(3);
++    if title_budget > 0 && !group.label.is_empty() {
++        let title = truncate_end(&group.label, title_budget);
++        used = display_width(&title) + 3;
++        top.push(Span::styled("─ ", border_style));
++        top.push(Span::styled(title, title_style));
++        top.push(Span::styled(" ", border_style));
++    }
++    top.push(Span::styled(
++        "─".repeat(inner_width.saturating_sub(used)),
++        border_style,
++    ));
++    top.push(Span::styled("╮", border_style));
++    frame.render_widget(
++        Paragraph::new(Line::from(top)),
++        Rect::new(rect.x, rect.y, rect.width, 1),
++    );
++
++    let bottom_y = rect.y + rect.height - 1;
++    for y in rect.y + 1..bottom_y {
++        for x in [rect.x, rect.x + rect.width - 1] {
++            frame.render_widget(
++                Paragraph::new(Span::styled("│", border_style)),
++                Rect::new(x, y, 1, 1),
++            );
++        }
++    }
++    frame.render_widget(
++        Paragraph::new(Span::styled(
++            format!("╰{}╯", "─".repeat(inner_width)),
++            border_style,
++        )),
++        Rect::new(rect.x, bottom_y, rect.width, 1),
++    );
++}
++
+ pub(crate) fn collapsed_sidebar_toggle_rect(area: Rect) -> Rect {
+     let bottom_y = area.y + area.height.saturating_sub(1);
+     let content_w = area.width.saturating_sub(1);
+@@ -1429,9 +1699,368 @@ mod tests {
+             .to_string()
+     }
+ 
++    fn app_with_agent_tabs(spaces: &[(&str, &[Agent])]) -> AppState {
++        let mut app = crate::app::state::AppState::test_new();
++        app.workspaces = spaces
++            .iter()
++            .map(|(name, agents)| {
++                let mut workspace = Workspace::test_new(name);
++                for _ in 1..agents.len() {
++                    workspace.test_add_tab(None);
++                }
++                workspace
++            })
++            .collect();
++        app.ensure_test_terminals();
++        for (ws_idx, (_, agents)) in spaces.iter().enumerate() {
++            for (tab_idx, agent) in agents.iter().enumerate() {
++                let tab = &app.workspaces[ws_idx].tabs[tab_idx];
++                let terminal_id = tab.panes[&tab.root_pane].attached_terminal_id.clone();
++                app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(*agent);
++            }
++        }
++        app
++    }
++
++    fn app_with_split_agent_tabs(tabs: &[&[Agent]]) -> AppState {
++        let mut workspace = Workspace::test_new("one");
++        for (tab_idx, agents) in tabs.iter().enumerate() {
++            if tab_idx > 0 {
++                workspace.test_add_tab(None);
++            }
++            workspace.active_tab = tab_idx;
++            for _ in 1..agents.len() {
++                workspace.test_split(ratatui::layout::Direction::Horizontal);
++            }
++        }
++        let mut app = AppState::test_new();
++        app.workspaces = vec![workspace];
++        app.ensure_test_terminals();
++        for (tab_idx, agents) in tabs.iter().enumerate() {
++            let tab = &app.workspaces[0].tabs[tab_idx];
++            for (pane_id, agent) in tab.layout.pane_ids().iter().zip(agents.iter()) {
++                let terminal_id = &tab.panes[pane_id].attached_terminal_id;
++                app.terminals.get_mut(terminal_id).unwrap().detected_agent = Some(*agent);
++            }
++        }
++        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        app
++    }
++
++    #[test]
++    fn split_agent_groups_render_untitled_boxes_inside_the_space() {
++        let mut app = app_with_split_agent_tabs(&[
++            &[Agent::Codex],
++            &[Agent::Pi, Agent::Claude],
++            &[Agent::Codex],
++        ]);
++        app.sidebar_agents.cards = true;
++        app.sidebar_agents.row_gap = 1;
++        let area = Rect::new(0, 0, 20, 13);
++        let body = agent_panel_body_rect(area, false);
++        let mut terminal = Terminal::new(TestBackend::new(20, 13)).unwrap();
++        terminal
++            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
++            .unwrap();
++        let rows = (0..9)
++            .map(|offset| row_text(terminal.backend().buffer(), body.y + offset, 20))
++            .collect::<Vec<_>>();
++        assert_eq!(
++            rows,
++            [
++                "╭─ one ───────────╮",
++                "│  codex          │",
++                "│ ╭─────────────╮ │",
++                "│ │ pi          │ │",
++                "│ │▀▀▀▀▀▀▀▀▀▀▀▀▀│ │",
++                "│ │ claude      │ │",
++                "│ ╰─────────────╯ │",
++                "│  codex          │",
++                "╰─────────────────╯",
++            ]
++        );
++        let layout = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert_eq!(layout.split_boxes.len(), 1);
++        assert!(layout.split_boxes[0].label.is_empty());
++        assert_eq!(layout.card_tails.len(), 1);
++        assert_eq!(layout.card_tails[0].0, 1);
++    }
++
++    #[test]
++    fn split_agent_groups_use_tab_identity_and_only_detected_agents() {
++        let mut app =
++            app_with_split_agent_tabs(&[&[Agent::Pi, Agent::Claude], &[Agent::Pi, Agent::Claude]]);
++        // Matching tab labels must not merge distinct tabs.
++        for tab in &mut app.workspaces[0].tabs {
++            tab.custom_name = Some("same".into());
++        }
++        let body = Rect::new(0, 0, 20, 20);
++        let layout = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert_eq!(layout.split_boxes.len(), 2);
++        let terminal_id = app.workspaces[0].tabs[0].panes[&app.workspaces[0].tabs[0].root_pane]
++            .attached_terminal_id
++            .clone();
++        app.terminals.get_mut(&terminal_id).unwrap().detected_agent = None;
++        let layout = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert_eq!(layout.split_boxes.len(), 1);
++        assert_eq!(layout.entries.len(), 3);
++
++        app.agent_panel_sort = AgentPanelSort::Priority;
++        assert!(
++            agent_panel_layout(&app, &agent_panel_entries(&app), body, 0)
++                .split_boxes
++                .is_empty()
++        );
++    }
++
++    #[test]
++    fn split_agent_groups_close_and_reopen_within_small_viewports() {
++        let mut app = app_with_split_agent_tabs(&[&[Agent::Pi, Agent::Claude, Agent::Codex]]);
++        app.sidebar_agents.cards = true;
++        app.sidebar_agents.row_gap = 1;
++        let entries = agent_panel_entries(&app);
++        let layouts = [(0, 1), (1, 1), (3, 2)];
++        for (gap, rows) in layouts {
++            app.sidebar_agents.row_gap = gap;
++            app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]; rows];
++            for width in [4, 5, 9, 10, 20] {
++                for height in 1..=12 {
++                    let body = Rect::new(2, 3, width, height);
++                    for scroll in 0..entries.len() {
++                        let layout = agent_panel_layout(&app, &entries, body, scroll);
++                        assert!(!layout.entries.is_empty(), "{body:?}, scroll={scroll}");
++                        for group in layout.boxes.iter().chain(&layout.split_boxes) {
++                            assert!(group.rect.y >= body.y);
++                            assert!(group.rect.bottom() <= body.bottom());
++                            assert!(group.rect.right() <= body.right());
++                        }
++                        for (_, rect) in layout.entries.iter().chain(&layout.card_tails) {
++                            assert!(rect.bottom() <= body.bottom());
++                            for group in layout.boxes.iter().chain(&layout.split_boxes) {
++                                assert!(rect.y != group.rect.y);
++                                assert!(
++                                    rect.bottom() <= group.rect.y
++                                        || rect.y < group.rect.bottom() - 1
++                                );
++                            }
++                        }
++                        if width >= 10 && height >= 5 {
++                            assert_eq!(layout.split_boxes.len(), 1);
++                            assert_eq!(layout.split_boxes[0].rect.y, body.y + 1);
++                            assert_eq!(
++                                layout.boxes[0].rect.bottom(),
++                                layout.split_boxes[0].rect.bottom() + 1
++                            );
++                        } else {
++                            assert!(layout.split_boxes.is_empty());
++                        }
++                    }
++                    let area = Rect::new(body.x, body.y - 3, width, height + 3);
++                    let scroll = agent_panel_scroll_for_target(&app, area, 0, entries.len() - 1);
++                    let bottom = agent_panel_layout(&app, &entries, body, scroll);
++                    assert_eq!(bottom.entries.last().unwrap().0, entries.len() - 1);
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn grouped_agent_panel_frames_each_space_in_a_titled_box() {
++        let mut app = app_with_agent_tabs(&[("one", &[Agent::Pi]), ("two", &[Agent::Claude])]);
++        app.active = Some(1);
++        app.sidebar_agents.rows = vec![vec![
++            crate::config::AgentSidebarToken::Workspace,
++            crate::config::AgentSidebarToken::Agent,
++        ]];
++
++        let area = Rect::new(0, 0, 16, 10);
++        let body = agent_panel_body_rect(area, false);
++        let mut terminal = Terminal::new(TestBackend::new(16, 10)).unwrap();
++        terminal
++            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
++            .unwrap();
++        let buffer = terminal.backend().buffer();
++
++        let rows = (0..6)
++            .map(|offset| row_text(buffer, body.y + offset, 16))
++            .collect::<Vec<_>>();
++        assert_eq!(
++            rows,
++            [
++                "╭─ one ───────╮",
++                "│ pi          │",
++                "╰─────────────╯",
++                "╭─ two ───────╮",
++                "│ claude      │",
++                "╰─────────────╯",
++            ]
++        );
++        assert_eq!(buffer[(0, body.y)].fg, app.palette.overlay0);
++        assert_eq!(buffer[(0, body.y + 3)].fg, app.palette.accent);
++
++        let layout = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert_eq!(
++            layout.entries,
++            vec![
++                (0, Rect::new(1, body.y + 1, 13, 1)),
++                (1, Rect::new(1, body.y + 4, 13, 1)),
++            ]
++        );
++    }
++
++    #[test]
++    fn agent_cards_use_half_row_edges_and_tint_from_the_host_background() {
++        let mut app = app_with_agent_tabs(&[
++            ("one", &[Agent::Pi, Agent::Claude]),
++            ("two", &[Agent::Codex]),
++        ]);
++        app.active = Some(1);
++        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        app.sidebar_agents.cards = true;
++        app.sidebar_agents.row_gap = 1;
++        app.host_terminal_theme = crate::terminal_theme::TerminalTheme {
++            foreground: Some(crate::terminal_theme::RgbColor {
++                r: 200,
++                g: 200,
++                b: 200,
++            }),
++            background: Some(crate::terminal_theme::RgbColor { r: 0, g: 0, b: 0 }),
++        };
++
++        let area = Rect::new(0, 0, 16, 14);
++        let body = agent_panel_body_rect(area, false);
++        let mut terminal = Terminal::new(TestBackend::new(16, 14)).unwrap();
++        terminal
++            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
++            .unwrap();
++        let buffer = terminal.backend().buffer();
++
++        let rows = (0..8)
++            .map(|offset| row_text(buffer, body.y + offset, 16))
++            .collect::<Vec<_>>();
++        assert_eq!(
++            rows,
++            [
++                "╭─ one ───────╮",
++                "│  pi         │",
++                "│ ▀▀▀▀▀▀▀▀▀▀▀ │",
++                "│  claude     │",
++                "╰─────────────╯",
++                "╭─ two ───────╮",
++                "│  codex      │",
++                "╰─────────────╯",
++            ]
++        );
++        let card = Color::Rgb(7, 7, 7);
++        let focused_card = Color::Rgb(18, 18, 18);
++        assert_eq!(buffer[(2, body.y + 1)].bg, card);
++        assert_eq!(buffer[(1, body.y + 1)].bg, Color::Reset);
++        assert_eq!(buffer[(2, body.y + 2)].fg, card);
++        assert_eq!(buffer[(2, body.y + 6)].bg, focused_card);
++
++        let layout = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert_eq!(
++            layout.card_tails,
++            vec![(0, Rect::new(2, body.y + 2, 11, 1))]
++        );
++
++        // Scrolled so the box is cut under the first card: it closes without an edge.
++        let cut = agent_panel_layout(
++            &app,
++            &agent_panel_entries(&app),
++            Rect::new(body.x, body.y, body.width, 4),
++            0,
++        );
++        assert_eq!(cut.entries.len(), 1);
++        assert!(cut.card_tails.is_empty());
++        assert_eq!(cut.boxes[0].rect, Rect::new(0, body.y, 15, 3));
++    }
++
++    #[test]
++    fn grouped_agent_boxes_close_at_the_viewport_and_reopen_when_scrolled() {
++        let mut app = app_with_agent_tabs(&[("one", &[Agent::Pi, Agent::Claude, Agent::Codex])]);
++        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++
++        // Three header rows plus a four-row body.
++        let area = Rect::new(0, 0, 12, 7);
++        let body = agent_panel_body_rect(area, false);
++        let entries = agent_panel_entries(&app);
++
++        let top = agent_panel_layout(&app, &entries, body, 0);
++        assert_eq!(
++            top.entries
++                .iter()
++                .map(|(index, _)| *index)
++                .collect::<Vec<_>>(),
++            [0, 1]
++        );
++        assert_eq!(top.boxes.len(), 1);
++        assert_eq!(top.boxes[0].rect, Rect::new(0, body.y, 11, 4));
++
++        let metrics = agent_panel_scroll_metrics(&app, area);
++        assert_eq!(metrics.max_offset_from_bottom, 1);
++        assert_eq!(metrics.viewport_rows, 2);
++
++        let scrolled = agent_panel_layout(&app, &entries, body, 1);
++        assert_eq!(
++            scrolled
++                .entries
++                .iter()
++                .map(|(index, rect)| (*index, rect.y))
++                .collect::<Vec<_>>(),
++            [(1, body.y + 1), (2, body.y + 2)]
++        );
++        assert_eq!(scrolled.boxes[0].rect, Rect::new(0, body.y, 11, 4));
++    }
++
++    #[test]
++    fn agent_group_boxes_only_apply_to_the_grouped_sort() {
++        let mut app = app_with_agent_tabs(&[("one", &[Agent::Pi]), ("two", &[Agent::Claude])]);
++        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
++        let body = agent_panel_body_rect(Rect::new(0, 0, 16, 10), false);
++
++        app.agent_panel_sort = AgentPanelSort::Priority;
++        let priority = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert!(priority.boxes.is_empty());
++        assert_eq!(priority.entries[1].1, Rect::new(0, body.y + 1, 16, 1));
++
++        app.agent_panel_sort = AgentPanelSort::Spaces;
++        app.sidebar_agents.group_boxes = false;
++        let unboxed = agent_panel_layout(&app, &agent_panel_entries(&app), body, 0);
++        assert!(unboxed.boxes.is_empty());
++        assert_eq!(unboxed.entries[1].1, Rect::new(0, body.y + 1, 16, 1));
++    }
++
++    #[test]
++    fn boxed_rows_keep_the_workspace_only_when_it_is_the_only_text() {
++        let rows = without_boxed_workspace(vec![
++            vec![
++                ResolvedToken::StateIcon,
++                ResolvedToken::Workspace("ai".into()),
++                ResolvedToken::Tab("todo".into()),
++            ],
++            vec![
++                ResolvedToken::StateIcon,
++                ResolvedToken::Workspace("herdr".into()),
++            ],
++        ]);
++
++        assert_eq!(
++            rows,
++            vec![
++                vec![ResolvedToken::StateIcon, ResolvedToken::Tab("todo".into())],
++                vec![
++                    ResolvedToken::StateIcon,
++                    ResolvedToken::Workspace("herdr".into()),
++                ],
++            ]
++        );
++    }
++
+     #[test]
+     fn default_agent_rows_remove_redundant_state_text() {
+         let mut app = crate::app::state::AppState::test_new();
++        app.sidebar_agents.group_boxes = false;
+         let workspace = Workspace::test_new("one");
+         let pane_id = workspace.tabs[0].root_pane;
+         app.workspaces = vec![workspace];
+@@ -1493,6 +2122,7 @@ mod tests {
+     #[test]
+     fn narrow_agent_rows_preserve_later_tab_tokens() {
+         let mut app = crate::app::state::AppState::test_new();
++        app.sidebar_agents.group_boxes = false;
+         let mut workspace = Workspace::test_new("very-long-workspace-name");
+         let tab_idx = workspace.test_add_tab(Some("logs"));
+         let pane_id = workspace.tabs[tab_idx].root_pane;
+@@ -1520,6 +2150,7 @@ mod tests {
+     #[test]
+     fn stripped_terminal_title_renders_with_unicode_width_truncation() {
+         let mut app = crate::app::state::AppState::test_new();
++        app.sidebar_agents.group_boxes = false;
+         let workspace = Workspace::test_new("one");
+         let pane_id = workspace.tabs[0].root_pane;
+         app.workspaces = vec![workspace];
+@@ -1566,6 +2197,7 @@ mod tests {
+     #[test]
+     fn variable_agent_heights_pack_the_bottom_and_reveal_targets() {
+         let mut app = crate::app::state::AppState::test_new();
++        app.sidebar_agents.group_boxes = false;
+         app.workspaces = vec![
+             Workspace::test_new("one"),
+             Workspace::test_new("two"),

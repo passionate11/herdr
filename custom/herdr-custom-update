@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+script=$0
+while [ -L "$script" ]; do
+    directory=$(CDPATH= cd -P -- "$(dirname -- "$script")" && pwd)
+    target=$(readlink "$script")
+    case "$target" in
+        /*) script=$target ;;
+        *) script=$directory/$target ;;
+    esac
+done
+directory=$(CDPATH= cd -P -- "$(dirname -- "$script")" && pwd)
+root="${HERDR_CUSTOM_INSTALL_ROOT:-$HOME/.local/share/herdr-custom}"
+python="$root/venv/bin/python"
+if [ ! -x "$python" ]; then
+    echo "Missing updater environment: $python" >&2
+    echo "Create it with python3 -m venv and install custom/requirements.txt." >&2
+    exit 1
+fi
+exec "$python" "$directory/update.py" "$@"
