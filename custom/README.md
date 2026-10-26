@@ -25,8 +25,7 @@ Cards mix the host terminal background toward its foreground by 3.5%, or
 9% for the focused agent. A single agent
 in a split tab gets no subgroup. Small viewports fall back to the simpler
 layout. Scrolled groups retain their heading and complete visible branches.
-Tree rows use agent-tree's compact status marks while retaining Herdr theme
-colors: `◐` while working, `●` when blocked, `✓` when done, and `○` when idle.
+Tree rows retain Herdr's original status symbols and theme colors.
 
 ## Build And Validate
 

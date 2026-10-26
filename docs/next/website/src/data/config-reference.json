@@ -1070,7 +1070,7 @@
           "key": "ui.sidebar.agents.group_tree",
           "type": "boolean",
           "default": "false",
-          "description": "Use workspace tree headings and short, untitled branches for agents sharing a split tab. Tree rows use compact working, blocked, done and idle marks with the active theme's original status colors. Takes precedence over group_boxes in spaces order. Priority order and custom agent views keep their existing layout."
+          "description": "Use workspace tree headings and short, untitled branches for agents sharing a split tab with Herdr's original status symbols and theme colors. Takes precedence over group_boxes in spaces order. Priority order and custom agent views keep their existing layout."
         },
         {
           "key": "ui.sidebar.agents.cards",

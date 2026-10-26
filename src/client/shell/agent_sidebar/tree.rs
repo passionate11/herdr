@@ -1,23 +1,6 @@
 use super::layout::{GroupBox, TreeLink};
 use super::{put_text, AgentRow, Buffer, Line, Palette, Paragraph, Rect, Style, Widget};
 
-pub(super) fn status_indicator(
-    status: crate::api::schema::AgentStatus,
-    palette: &Palette,
-) -> (&'static str, ratatui::style::Color) {
-    use crate::api::schema::AgentStatus;
-
-    // Keep agent-tree's compact symbols while retaining Herdr theme colors.
-    let symbol = match status {
-        AgentStatus::Working => "◐",
-        AgentStatus::Blocked => "●",
-        AgentStatus::Done => "✓",
-        AgentStatus::Idle => "○",
-        AgentStatus::Unknown => "·",
-    };
-    (symbol, super::status_color(status, palette))
-}
-
 pub(super) fn render_group(
     buffer: &mut Buffer,
     group: &GroupBox,

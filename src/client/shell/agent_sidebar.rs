@@ -395,17 +395,12 @@ pub(super) fn render_agent_row(
             .fg(palette.subtext0)
             .add_modifier(Modifier::BOLD)
     };
-    let (symbol, color) = if boxed && config.agents.group_tree {
-        tree::status_indicator(row.status, palette)
-    } else {
-        (
-            status_icon(row.status, config.status_indicators),
-            status_color(row.status, palette),
-        )
-    };
-    let status_style = Style::default().fg(color);
+    let status_style = Style::default().fg(status_color(row.status, palette));
     let secondary = Style::default().fg(palette.overlay0);
-    let icon = (symbol, status_style);
+    let icon = (
+        status_icon(row.status, config.status_indicators),
+        status_style,
+    );
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {
             kind: crate::ui::ResolvedTokenKind::StateIcon,
