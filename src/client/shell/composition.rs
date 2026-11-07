@@ -100,6 +100,7 @@ impl ClientShellState {
         if !self.config.mouse_capture {
             self.hits = ShellHitMap::default();
         }
+        self.render_agent_drag(&mut buffer);
         let message = self.endpoint_error.clone().unwrap_or_else(|| {
             let status = self
                 .endpoint_status(&self.active_endpoint_id)
@@ -155,6 +156,8 @@ impl ClientShellState {
         self.config.agent_card_background = self.host_background;
         self.config.agent_card_foreground = self.host_foreground;
         self.last_composed_at = Some(std::time::Instant::now());
+        self.cancel_stale_agent_drag();
+        self.reveal_transferred_agent();
         self.selection_repaint_deadline = None;
         if self.last_composed_size != Some((cols, rows)) && self.mode == ClientShellMode::Navigate {
             self.reveal_navigation_workspace = true;
@@ -309,6 +312,7 @@ impl ClientShellState {
         if !self.config.mouse_capture {
             self.hits.pane_splits.clear();
         }
+        self.render_agent_drag(&mut buffer);
         let mode_bar_area = if layout.mobile_header.is_empty()
             && self.config.tab_bar_position == TabBarPositionConfig::Bottom
             && !layout.tab_bar.is_empty()

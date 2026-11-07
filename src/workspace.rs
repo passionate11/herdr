@@ -613,6 +613,28 @@ impl Workspace {
         true
     }
 
+    pub(crate) fn take_tab_for_transfer(&mut self, index: usize) -> Option<Tab> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        let tab = self.tabs.remove(index);
+        for pane_id in tab.panes.keys() {
+            self.unregister_pane(*pane_id);
+        }
+        self.adjust_active_tab_after_removal(index);
+        Some(tab)
+    }
+
+    pub(crate) fn insert_transferred_tab(&mut self, mut tab: Tab) -> usize {
+        tab.number = self.next_public_tab_number;
+        self.next_public_tab_number += 1;
+        for pane_id in tab.layout.pane_ids() {
+            self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
+        }
+        self.tabs.push(tab);
+        self.tabs.len() - 1
+    }
+
     #[cfg(test)]
     pub fn close_active_tab(&mut self) -> bool {
         self.close_tab(self.active_tab)

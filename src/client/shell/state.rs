@@ -26,6 +26,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) agent_card_background: Option<crate::terminal_theme::RgbColor>,
     pub(super) agent_card_foreground: Option<crate::terminal_theme::RgbColor>,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
+    pub(super) collapsed_agent_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
     pub(super) toast_delivery: crate::config::ToastDelivery,
@@ -97,6 +98,7 @@ pub(super) struct ShellHitMap {
     pub(super) pane_splits: Vec<PaneSplitHit>,
     pub(super) agents: Vec<(Rect, String)>,
     pub(super) endpoint_agents: Vec<(Rect, ClientEndpointId, String)>,
+    pub(super) agent_group_toggles: Vec<(Rect, ClientEndpointId, String)>,
     pub(super) agent_body: Rect,
     pub(super) agent_scrollbar: Rect,
     pub(super) agent_scroll_metrics: Option<crate::pane::ScrollMetrics>,
@@ -621,6 +623,9 @@ impl ClientShellOverlay {
 #[derive(Debug)]
 pub(super) enum PendingEndpointKind {
     Generic,
+    AgentTransfer {
+        workspace_id: String,
+    },
     ProductAnnouncementDismiss {
         version: String,
         id: String,
@@ -882,11 +887,13 @@ pub(crate) struct ClientShellState {
     pub(super) chrome_drag: Option<ClientChromeDrag>,
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
+    pub(super) agent_drag: Option<super::agent_drag::AgentDrag>,
     pub(super) collapsed_groups: HashSet<String>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
     pub(super) pending_agent_reveal: Option<(ClientEndpointId, String)>,
+    pub(super) pending_transfer_reveal: Option<String>,
     pub(super) tab_scroll: usize,
     pub(super) mobile_switcher_scroll: usize,
     pub(super) reveal_focused_workspace: bool,
@@ -1022,6 +1029,24 @@ impl ClientShellState {
         if let Some(sort) = preferences.agent_panel_sort {
             config.agent_panel_sort = sort;
         }
+        for saved in &preferences.collapsed_agent_groups {
+            let endpoint_id = match &saved.profile_id {
+                None => ClientEndpointId::Local,
+                Some(profile_id) => {
+                    let Ok(profile_id) =
+                        crate::client::endpoint::ProfileId::parse(profile_id.clone())
+                    else {
+                        continue;
+                    };
+                    ClientEndpointId::Ssh(profile_id)
+                }
+            };
+            config
+                .collapsed_agent_groups
+                .entry(endpoint_id)
+                .or_default()
+                .insert(saved.workspace_id.clone());
+        }
         let mut remote_collapsed_groups = HashMap::<ClientEndpointId, HashSet<String>>::new();
         for saved in preferences.remote_collapsed_groups {
             let Ok(profile_id) = crate::client::endpoint::ProfileId::parse(saved.profile_id) else {
@@ -1057,11 +1082,13 @@ impl ClientShellState {
             chrome_drag: None,
             workspace_press: None,
             tab_press: None,
+            agent_drag: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
             remote_collapsed_groups,
             workspace_scroll: 0,
             agent_scroll: 0,
             pending_agent_reveal: None,
+            pending_transfer_reveal: None,
             tab_scroll: 0,
             mobile_switcher_scroll: 0,
             reveal_focused_workspace: true,
@@ -1241,6 +1268,8 @@ impl ClientShellState {
     }
 
     pub(super) fn reset_endpoint_projection(&mut self) {
+        self.agent_drag = None;
+        self.pending_transfer_reveal = None;
         self.hits = ShellHitMap::default();
         self.pane_surface = None;
         self.pending_pane_surface = None;
@@ -1590,6 +1619,7 @@ impl ClientShellState {
             }
         }
         self.snapshot = Some(snapshot);
+        self.cancel_stale_agent_drag();
         self.reconcile_pending_workspace_highlight();
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {
@@ -1700,6 +1730,7 @@ impl ClientShellState {
             self.copy_mode = None;
             self.reset_copy_pipeline();
             self.chrome_drag = None;
+            self.agent_drag = None;
             self.workspace_press = None;
             self.tab_press = None;
             if self.pane_mouse_gesture.as_ref().is_some_and(|gesture| {

@@ -568,6 +568,32 @@ impl ClientShellState {
         }
         match pending.kind {
             PendingEndpointKind::Generic => {}
+            PendingEndpointKind::AgentTransfer { workspace_id } => {
+                if let Ok(crate::api::schema::ResponseResult::TabInfo { tab }) = result {
+                    if tab.workspace_id == workspace_id {
+                        if let Some(groups) = self
+                            .config
+                            .collapsed_agent_groups
+                            .get_mut(&self.active_endpoint_id)
+                        {
+                            groups.remove(&workspace_id);
+                        }
+                        let mut outcome = ClientShellInput::default();
+                        self.persist_chrome_preferences(&mut outcome);
+                        self.pending_transfer_reveal = Some(tab.tab_id);
+                    }
+                } else if let Err(error) = result {
+                    if error.code.as_deref() == Some("stale_target") {
+                        self.push_endpoint_notice(
+                            ClientEndpointNoticeKind::Rejected,
+                            "tab.transfer:stale_target",
+                            "Group changed",
+                            error.message,
+                        );
+                    }
+                }
+                return (true, Vec::new());
+            }
             PendingEndpointKind::PaneLinkResolve { .. } => unreachable!("handled above"),
             PendingEndpointKind::ProductAnnouncementDismiss { version, id } => {
                 return match result {

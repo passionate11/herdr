@@ -37,6 +37,16 @@ pub struct TabMoveParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TabTransferParams {
+    pub tab_id: String,
+    pub source_workspace_id: String,
+    pub workspace_id: String,
+    pub expected_pane_ids: Vec<String>,
+    #[serde(default)]
+    pub focus: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TabInfo {
     pub tab_id: String,
     pub workspace_id: String,

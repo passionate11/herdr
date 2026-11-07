@@ -6,12 +6,15 @@ mod tree;
 
 #[derive(Clone, Copy)]
 struct RowGeometry {
+    source_index: usize,
+    collapsed: bool,
     height: u16,
     starts_space: bool,
     ends_space: bool,
     split: bool,
     starts_split: bool,
     ends_split: bool,
+    ends_tab: bool,
 }
 
 pub(in crate::client::shell) struct AgentListGeometry {
@@ -26,6 +29,7 @@ pub(in crate::client::shell) struct AgentListGeometry {
 
 #[derive(Default)]
 pub(super) struct AgentListLayout {
+    visible_rows: usize,
     pub(super) entries: Vec<(usize, Rect)>,
     pub(super) tails: Vec<(usize, Rect)>,
     pub(super) boxes: Vec<GroupBox>,
@@ -69,14 +73,19 @@ impl AgentListGeometry {
         let geometry = rows
             .iter()
             .enumerate()
-            .map(|(index, row)| {
+            .filter_map(|(index, row)| {
                 let row = agent_row(row);
                 let previous = index
                     .checked_sub(1)
                     .and_then(|i| rows.get(i))
                     .map(&agent_row);
                 let next = rows.get(index + 1).map(&agent_row);
+                let collapsed = tree && row.group_collapsed;
+                if collapsed && previous.is_some_and(|p| same_space(p, row)) {
+                    return None;
+                }
                 let split = split_boxes
+                    && !collapsed
                     && (previous.is_some_and(|p| same_tab(p, row))
                         || next.is_some_and(|n| same_tab(row, n)));
                 has_split_rows |= split;
@@ -86,14 +95,21 @@ impl AgentListGeometry {
                     2 * u16::from(boxed) + 2 * u16::from(split)
                 };
                 let max_height = body.height.saturating_sub(reserved);
-                RowGeometry {
-                    height: (row.rows.len().max(1).min(u16::MAX as usize) as u16).min(max_height),
+                Some(RowGeometry {
+                    source_index: index,
+                    collapsed,
+                    height: if collapsed {
+                        0
+                    } else {
+                        (row.rows.len().max(1).min(u16::MAX as usize) as u16).min(max_height)
+                    },
                     starts_space: boxed && previous.is_none_or(|p| !same_space(p, row)),
-                    ends_space: boxed && next.is_none_or(|n| !same_space(row, n)),
+                    ends_space: collapsed || (boxed && next.is_none_or(|n| !same_space(row, n))),
                     split,
                     starts_split: split && previous.is_none_or(|p| !same_tab(p, row)),
                     ends_split: split && next.is_none_or(|n| !same_tab(row, n)),
-                }
+                    ends_tab: next.is_none_or(|n| !same_tab(row, n)),
+                })
             })
             .collect();
         Self {
@@ -154,18 +170,23 @@ impl AgentListGeometry {
         crate::pane::ScrollMetrics {
             offset_from_bottom: max_scroll.saturating_sub(start),
             max_offset_from_bottom: max_scroll,
-            viewport_rows: self.layout(start).entries.len(),
+            viewport_rows: self.visible_rows(start),
         }
     }
 
     pub(in crate::client::shell) fn reveal(&self, requested_start: usize, target: usize) -> usize {
+        let target = self
+            .rows
+            .iter()
+            .rposition(|row| row.source_index <= target)
+            .unwrap_or(0);
         let max_scroll = self.max_scroll();
         let mut start = requested_start.min(max_scroll);
         if target < start {
             return target.min(max_scroll);
         }
         while start < max_scroll {
-            let visible = self.layout(start).entries.len();
+            let visible = self.visible_rows(start);
             if target < start.saturating_add(visible) {
                 break;
             }
@@ -176,7 +197,14 @@ impl AgentListGeometry {
 
     pub(super) fn layout(&self, scroll: usize) -> AgentListLayout {
         if self.tree {
-            return self.tree_layout(scroll);
+            let mut layout = self.tree_layout(scroll);
+            for (index, _) in layout.entries.iter_mut().chain(&mut layout.tails) {
+                *index = self.rows[*index].source_index;
+            }
+            for group in &mut layout.boxes {
+                group.index = self.rows[group.index].source_index;
+            }
+            return layout;
         }
         let mut layout = AgentListLayout::default();
         if self.body.is_empty() {
@@ -263,5 +291,13 @@ impl AgentListGeometry {
             });
         }
         layout
+    }
+
+    fn visible_rows(&self, scroll: usize) -> usize {
+        if self.tree {
+            self.tree_layout(scroll).visible_rows
+        } else {
+            self.layout(scroll).entries.len()
+        }
     }
 }

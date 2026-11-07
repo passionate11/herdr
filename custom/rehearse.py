@@ -317,7 +317,7 @@ class Rehearsal:
         return self.result(binary, "tab", "list")["tabs"]
 
     def read(self, binary, pane):
-        return self.cli(binary, "pane", "read", pane, "--source", "recent", "--lines", "100")
+        return self.cli(binary, "pane", "read", pane, "--source", "recent-unwrapped", "--lines", "100")
 
     def probe_input(self, binary, phase):
         for tag, info in self.expected.items():
@@ -506,19 +506,20 @@ class Rehearsal:
                 "split card click to focus its pane", self.args.timeout,
             )
             client.save(self.output, "after-click", self.args.png)
-        with Client(new, self.env, self.root, 72, 24, self.pyte) as client:
+        # The compact tree can fit all eight agents at 24 rows; force overflow.
+        with Client(new, self.env, self.root, 72, 20, self.pyte) as client:
             client.pump(3)
             initial = client.text(32)
             require(self.split_top.search(initial), "narrow client is missing its untitled subgroup")
             first_group = next(y for y, line in enumerate(client.screen.display) if self.split_top.search(line[:32]))
             for _ in range(3):
-                client.wheel(7, min(first_group + 2, 22), down=True)
+                client.wheel(7, min(first_group + 2, client.rows - 2), down=True)
             client.pump(1)
             require(client.text(32) != initial, "sidebar wheel did not change the narrow viewport")
             require("\u2570" in client.text(32), "scrolled sidebar has no closing group border")
             client.save(self.output, "after-narrow-scrolled", self.args.png)
             for _ in range(8):
-                client.wheel(7, min(first_group + 2, 22), down=False)
+                client.wheel(7, min(first_group + 2, client.rows - 2), down=False)
 
     def run(self):
         print(f"isolated directory: {self.root}", flush=True)
@@ -549,6 +550,11 @@ class Rehearsal:
         self.probe_input(self.args.new, "after")
         client_preferences = self.check_client_preferences(preferences)
         self.check_click_and_scroll()
+        if self.args.collapse:
+            self.check_group_collapse()
+            self.check_identity(before_panes, before_tabs)
+        if self.args.transfer:
+            self.check_tab_transfer()
         self.dump("result.json", {"passed": True, "mock_agents": 8, "pids": sorted(p["pid"] for p in self.expected.values()),
                                   "checks": ["identity", "pids", "screen content", "stdin", "subgroups", "click", "narrow scroll",
                                              "updater activation", "legacy preference migration" if legacy else "client preference preservation",
@@ -557,6 +563,125 @@ class Rehearsal:
                                   "activation": activation})
         self.success = True
         print("PASS: 8 mock agents kept their PID, pane/tab identity, screen content and input; subgroup/click/scroll checks passed", flush=True)
+
+    def check_group_collapse(self):
+        require(self.tree, "--collapse requires --tree")
+        alpha = next(iter(self.expected.values()))["workspace_id"]
+        hidden = [tag for tag, info in self.expected.items() if info["workspace_id"] == alpha]
+        visible = [tag for tag, info in self.expected.items() if info["workspace_id"] != alpha]
+        with Client(self.args.new, self.env, self.root, 120, 64, self.pyte) as client:
+            client.pump(3)
+            heading = next(y for y, line in enumerate(client.screen.display) if "\u25be alpha" in line[:32])
+            client.click(2, heading)
+            sidebar = client.text(32)
+            require("\u25b8 alpha" in sidebar, "collapsed arrow did not render")
+            require(all(tag not in sidebar for tag in hidden), "folded agents remain visible")
+            require(all(tag in sidebar for tag in visible), "folding alpha hid other workspaces")
+            client.save(self.output, "after-fold", self.args.png)
+        with Client(self.args.new, self.env, self.root, 120, 64, self.pyte) as client:
+            client.pump(3)
+            require("\u25b8 alpha" in client.text(32), "fold was not preserved on reattach")
+            heading = next(y for y, line in enumerate(client.screen.display) if "\u25b8 alpha" in line[:32])
+            client.click(2, heading)
+            sidebar = client.text(32)
+            require("\u25be alpha" in sidebar and all(tag in sidebar for tag in hidden), "unfold did not restore agents")
+            client.save(self.output, "after-unfold", self.args.png)
+        self.dump("collapse-result.json", {"passed": True, "checks": ["click", "hidden agents", "other workspaces", "reattach persistence", "unfold"]})
+        print("PASS: group fold/unfold and reattach persistence", flush=True)
+
+    def check_tab_transfer(self):
+        require(self.tree, "--transfer requires --tree")
+        new = self.args.new
+        source = self.expected["p02"]
+        alpha, original_tab = source["workspace_id"], source["tab_id"]
+        beta = self.expected["p05"]["workspace_id"]
+        gamma = self.expected["p08"]["workspace_id"]
+        original_ids = {tag: info["pane_id"] for tag, info in self.expected.items()}
+        # A plain shell must move with the visible agent subgroup.
+        self.cli(new, "pane", "split", source["pane_id"], "--direction", "right")
+        before = self.panes(new)
+        source_members = [p for p in before if p["tab_id"] == original_tab]
+        require(len(source_members) == 4, "split group should include three agents and a shell")
+        self.api("layout.set_split_ratio", {"tab_id": original_tab, "path": [], "ratio": 0.37})
+
+        def layout_shape(tab):
+            layout = self.api("layout.export", {"tab_id": tab})["layout"]
+            def strip_ids(value):
+                if isinstance(value, dict):
+                    return {key: strip_ids(item) for key, item in value.items() if key != "pane_id"}
+                if isinstance(value, list):
+                    return [strip_ids(item) for item in value]
+                return value
+            return {"zoomed": layout["zoomed"], "root": strip_ids(layout["root"])}
+
+        shape = layout_shape(original_tab)
+
+        def refresh_expected():
+            panes = self.panes(new)
+            for tag, info in self.expected.items():
+                current = next(p for p in panes if p.get("label") == tag)
+                info.update({key: current[key] for key in ["pane_id", "tab_id", "workspace_id"]})
+                os.kill(info["pid"], 0)
+                require(int((self.root / "pids" / f"{tag}.pid").read_text()) == info["pid"], f"{tag} restarted during transfer")
+            require(len(panes) == 9, "transfer lost or duplicated panes")
+            return panes
+
+        def transfer_current(destination):
+            info = self.expected["p02"]
+            members = [p["pane_id"] for p in self.panes(new) if p["tab_id"] == info["tab_id"]]
+            self.api("tab.transfer", {"tab_id": info["tab_id"], "source_workspace_id": info["workspace_id"],
+                     "workspace_id": destination, "expected_pane_ids": members, "focus": True})
+            refresh_expected()
+            require(layout_shape(self.expected["p02"]["tab_id"]) == shape, "transfer changed split ratios, tree, labels or zoom")
+
+        with Client(new, self.env, self.root, 120, 64, self.pyte) as client:
+            client.pump(3)
+            heading = next(y for y, line in enumerate(client.screen.display) if "\u25be beta" in line[:32])
+            client.click(2, heading)
+            require("\u25b8 beta" in client.text(32), "destination did not fold")
+            row = next(y for y, line in enumerate(client.screen.display) if "p02" in line[:32])
+            client.send(f"\x1b[<0;8;{row + 1}M".encode())
+            client.pump(0.2)
+            client.send(f"\x1b[<32;8;{heading + 1}M".encode())
+            client.pump(0.4)
+            require("move \u2192 beta" in client.text(32), "drag destination feedback missing")
+            client.save(self.output, "transfer-drag", self.args.png)
+            client.send(f"\x1b[<0;8;{heading + 1}m".encode())
+            eventually(lambda: any(p.get("label") == "p02" and p["workspace_id"] == beta for p in self.panes(new)),
+                       "whole split group dragged to beta", self.args.timeout)
+            client.pump(1)
+            require("\u25be beta" in client.text(32), "successful drop did not unfold destination")
+            client.save(self.output, "transfer-dropped", self.args.png)
+        moved = refresh_expected()
+        moved_tab = self.expected["p02"]["tab_id"]
+        require(len([p for p in moved if p["tab_id"] == moved_tab]) == 4, "shell passenger was left behind")
+        require(layout_shape(moved_tab) == shape, "mouse transfer changed the layout")
+        require(all(self.expected[tag]["workspace_id"] == beta for tag in ["p01", "p02", "p03"]), "only part of the subgroup moved")
+        require(self.expected["p04"]["workspace_id"] == alpha, "unrelated source tab moved")
+        # A -> B -> C -> A keeps every inherited public pane ID usable.
+        transfer_current(gamma)
+        transfer_current(alpha)
+        solo = self.expected["p08"]
+        self.api("tab.transfer", {"tab_id": solo["tab_id"], "source_workspace_id": gamma,
+                 "workspace_id": beta, "expected_pane_ids": [solo["pane_id"]], "focus": True})
+        refresh_expected()
+        require(not any(p["workspace_id"] == gamma for p in self.panes(new)), "empty source workspace was not removed")
+        self.probe_input(new, "transferred")
+        for phase in ["before-handoff", "after-handoff"]:
+            if phase == "after-handoff":
+                self.cli(new, "server", "live-handoff", "--import-exe", str(new), timeout=40)
+                eventually(lambda: len(self.panes(new)) == 9, "second handoff", self.args.timeout)
+                refresh_expected()
+            for tag, old_id in original_ids.items():
+                require(f"MOCK:{tag}:PID:" in self.read(new, old_id), f"{tag} inherited pane alias failed {phase}")
+                self.cli(new, "pane", "report-agent-session", old_id, "--source", "rehearse-transfer", "--agent", self.expected[tag]["agent"],
+                         "--agent-session-id", "test-" + tag, "--seq", "1" if phase == "before-handoff" else "2")
+        self.probe_input(new, "transfer-handoff")
+        self.snapshot(new, "transfer-after-handoff")
+        self.dump("transfer-result.json", {"passed": True, "panes": 9, "mock_agents": 8,
+                  "checks": ["mouse drag", "folded destination", "shell passenger", "split ratios and layout", "other tabs untouched",
+                             "repeated transfer", "empty source removal", "process survival", "stdin", "inherited pane IDs", "aliases across handoff"]})
+        print("PASS: whole-tab drag, repeated transfer and hot handoff kept all processes, layout and inherited pane IDs", flush=True)
 
     def cleanup(self):
         if self.success and self.args.keep:
@@ -621,6 +746,8 @@ def main():
     parser.add_argument("--output", type=Path, help="artifact directory outside the disposable server directory")
     parser.add_argument("--png", action="store_true", help="also render terminal captures as PNG using Pillow")
     parser.add_argument("--tree", action="store_true", help="rehearse workspace trees and short split-tab branches")
+    parser.add_argument("--collapse", action="store_true", help="also verify tree fold/unfold and reattach persistence")
+    parser.add_argument("--transfer", action="store_true", help="also verify whole-tab drag and aliases across a second live handoff")
     parser.add_argument("--cc", default="cc", help="C compiler used to build the two mock agent executables")
     parser.add_argument("--timeout", type=float, default=20, help="per-check timeout in seconds")
     args = parser.parse_args()

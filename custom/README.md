@@ -10,7 +10,8 @@ the focused row. Boxed groups
 remain available when `group_tree` is false. Grouping uses endpoint,
 workspace and tab identities. Priority sorting and custom agent views retain
 their upstream order. Rendering, mouse targets and scrolling share one layout.
-The server protocol is unchanged.
+The frozen client wire codecs are unchanged. Whole-tab movement uses the new,
+advertised JSON method `tab.transfer` and requires the matching custom server.
 
 ```toml
 [ui.sidebar.agents]
@@ -22,10 +23,25 @@ rows = [["state_icon", "workspace", "tab", "agent"]]
 ```
 
 Cards mix the host terminal background toward its foreground by 3.5%, or
-9% for the focused agent. A single agent
+9% for the focused agent. With the tree layout, the row gap appears only
+between tab subgroups; agents in one split tab stay compact. A single agent
 in a split tab gets no subgroup. Small viewports fall back to the simpler
 layout. Scrolled groups retain their heading and complete visible branches.
 Tree rows retain Herdr's original status symbols and theme colors.
+Click a workspace tree heading to fold or unfold its agents and split branches.
+Folded headings use `▸`; expanded headings use `▾`. Folds are stored in client
+preferences by endpoint and workspace ID, independently of the spaces panel.
+Agents continue running while folded. Priority order, custom agent views and
+small viewports that fall back to the simpler layout show all agents.
+
+Drag an agent row onto another space, its tree heading (including a folded
+heading), or one of its agent rows. This moves the entire tab as a new subgroup,
+including any ordinary shell panes. Split layout, labels and running processes
+are preserved. A successful drop unfolds the destination and follows the moved
+tab. Dropping on the source or outside a space cancels; Esc also cancels.
+Movement is limited to spaces on the same connected machine. If its last tab
+moves away, the empty source space is removed. Inherited pane IDs keep working
+after movement and subsequent live handoff.
 
 ## Build And Validate
 
@@ -64,6 +80,9 @@ It never reads private conversations. It verifies pane/tab identities, process
 survival, input/output, grouped rendering and mouse targeting across handoff.
 Read its `--help` for artifact and keep options. Rehearsal artifacts and live
 session receipts belong outside Git.
+Use `--tree --collapse --transfer --png` to verify the custom tree controls,
+whole-tab drag (with a shell passenger), repeated moves and inherited pane IDs
+across a second live handoff.
 
 ## Install And Update
 

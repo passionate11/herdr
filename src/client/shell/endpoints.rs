@@ -149,6 +149,8 @@ impl ClientShellState {
         }
         if endpoint_id == &self.active_endpoint_id && status != ClientEndpointStatus::Online {
             self.pending_workspace_highlight = None;
+            self.agent_drag = None;
+            self.pending_transfer_reveal = None;
         }
         if let Some(endpoint) = self
             .endpoints

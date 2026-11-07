@@ -227,6 +227,7 @@ impl ClientShellState {
             outcome.repaint = true;
         }
         for event in events {
+            self.cancel_stale_agent_drag();
             let event = match event {
                 RawInputEvent::Key(key) => match self.host_text_commit(&key) {
                     Some(text) => RawInputEvent::Text(crate::input::TextCommit::new(text)),
@@ -325,6 +326,7 @@ impl ClientShellState {
                         .push(ClientMessage::ClientShellFocus { focused: true });
                 }
                 RawInputEvent::OuterFocusLost => {
+                    outcome.repaint |= self.agent_drag.take().is_some();
                     outcome.repaint |= self.clear_link_hover();
                     self.outer_focused = Some(false);
                     self.release_input_leases(&mut outcome);
@@ -389,6 +391,16 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         outcome.repaint |= self.clear_link_hover();
+        if key.code == KeyCode::Esc
+            && key.kind != KeyEventKind::Release
+            && self.agent_drag.take().is_some()
+        {
+            outcome.repaint = true;
+            return;
+        }
+        if key.kind != KeyEventKind::Release && self.agent_drag.take().is_some() {
+            outcome.repaint = true;
+        }
         if self.copy_operation_in_flight {
             self.copy_input_queue.push_back(key);
             return;

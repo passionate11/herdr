@@ -5,16 +5,18 @@ impl AgentListGeometry {
         let mut suffix = 0u32;
         let mut start = self.rows.len();
         for (index, row) in self.rows.iter().enumerate().rev() {
-            suffix += u32::from(row.height);
+            suffix += u32::from(row.height) + u32::from(row.collapsed);
             if index + 1 < self.rows.len() {
                 suffix += if row.ends_space {
-                    2
-                } else {
+                    2 - u32::from(self.rows[index + 1].collapsed)
+                } else if row.ends_tab {
                     u32::from(self.gap)
+                } else {
+                    0
                 };
             }
             // Every scrolled space starts with its own visible heading.
-            if suffix + 1 > u32::from(self.body.height) {
+            if suffix + u32::from(!row.collapsed) > u32::from(self.body.height) {
                 break;
             }
             start = index;
@@ -32,6 +34,16 @@ impl AgentListGeometry {
             }
             let heading_y = y;
             y += 1;
+            if row.collapsed {
+                layout.boxes.push(GroupBox {
+                    index,
+                    rect: Rect::new(self.body.x, heading_y, self.body.width - 1, 1),
+                    split: false,
+                });
+                index += 1;
+                y = y.saturating_add(1);
+                continue;
+            }
             let first_entry = layout.entries.len();
             loop {
                 let row = self.rows[index];
@@ -45,7 +57,9 @@ impl AgentListGeometry {
                 if row.ends_space || index == self.rows.len() {
                     break;
                 }
-                y = y.saturating_add(self.gap);
+                if row.ends_tab {
+                    y = y.saturating_add(self.gap);
+                }
             }
 
             // Group only visible entries. Clipped tabs get a complete short branch,
@@ -97,9 +111,11 @@ impl AgentListGeometry {
             if self.cards && self.gap > 0 {
                 for pair in layout.entries[first_entry..end].windows(2) {
                     let (first, rect) = pair[0];
-                    layout
-                        .tails
-                        .push((first, Rect::new(rect.x, rect.bottom(), rect.width, 1)));
+                    if self.rows[first].ends_tab {
+                        layout
+                            .tails
+                            .push((first, Rect::new(rect.x, rect.bottom(), rect.width, 1)));
+                    }
                 }
             }
             if !self.rows[layout.entries[end - 1].0].ends_space {
@@ -107,6 +123,7 @@ impl AgentListGeometry {
             }
             y = layout.entries[end - 1].1.bottom().saturating_add(1);
         }
+        layout.visible_rows = index.saturating_sub(scroll);
         layout
     }
 }

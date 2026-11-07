@@ -43,6 +43,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "tab.focus",
     "tab.move",
     "tab.rename",
+    "tab.transfer",
     "workspace.close",
     "workspace.create",
     "workspace.focus",
@@ -288,6 +289,10 @@ mod tests {
         )))
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
+        assert_eq!(
+            actual.remove("tab.transfer").as_deref(),
+            Some("8566660de2b3229d822c8bc48bda82869c7b3e024cc06389f1f049870f84a324")
+        );
         // Freeze additive methods separately without rewriting the published fixture.
         assert_eq!(
             actual.remove("pane.clear").as_deref(),

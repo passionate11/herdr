@@ -51,6 +51,9 @@ pub(crate) struct HandoffManifest {
     /// committed. Absent from manifests written before this field existed.
     #[serde(default)]
     pub host_shutdown_intent: Option<crate::platform::HostShutdownIntent>,
+    /// Running processes still report the public pane ID inherited at launch.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub public_pane_aliases: std::collections::HashMap<String, u32>,
 }
 
 #[cfg(unix)]
@@ -323,6 +326,7 @@ pub(crate) fn manifest_for(
         panes,
         api_window_title,
         host_shutdown_intent,
+        public_pane_aliases: std::collections::HashMap::new(),
     }
 }
 
@@ -572,6 +576,20 @@ mod tests {
             serde_json::from_slice(&encoded).expect("manifest should deserialize");
 
         assert_eq!(decoded.host_shutdown_intent, Some(intent));
+    }
+
+    #[test]
+    fn handoff_public_aliases_are_additive_and_round_trip() {
+        let mut manifest = manifest_for(empty_snapshot(), Vec::new(), None, None, None, None);
+        let legacy: HandoffManifest =
+            serde_json::from_value(serde_json::to_value(&manifest).unwrap()).unwrap();
+        assert!(legacy.public_pane_aliases.is_empty());
+        manifest
+            .public_pane_aliases
+            .insert("old-space:p1".into(), 42);
+        let restored: HandoffManifest =
+            serde_json::from_value(serde_json::to_value(&manifest).unwrap()).unwrap();
+        assert_eq!(restored.public_pane_aliases["old-space:p1"], 42);
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub(super) struct AgentRow {
     pub(super) workspace_number: usize,
     pub(super) tab_id: String,
     pub(super) workspace_focused: bool,
+    pub(super) group_collapsed: bool,
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
@@ -219,6 +220,13 @@ pub(super) fn render_agent_list<T>(
         let row = agent_row(&rows[group.index]);
         if geometry.tree {
             tree::render_group(buffer, group, row, &config.palette);
+            if !group.split && config.mouse_capture {
+                hits.agent_group_toggles.push((
+                    Rect::new(group.rect.x, group.rect.y, group.rect.width, 1),
+                    row.endpoint_id.clone().unwrap_or(ClientEndpointId::Local),
+                    row.workspace_id.clone(),
+                ));
+            }
             continue;
         }
         render_group_box(
@@ -364,6 +372,10 @@ pub(super) fn agent_row(
         workspace_number: workspace.number,
         tab_id: agent.tab_id.clone(),
         workspace_focused: workspace.focused,
+        group_collapsed: config
+            .collapsed_agent_groups
+            .get(&ClientEndpointId::Local)
+            .is_some_and(|groups| groups.contains(&agent.workspace_id)),
         status: agent.agent_status,
         focused: agent.focused,
         rows,

@@ -29,8 +29,10 @@ pub(super) fn render_group(
             palette.subtext0
         });
         Paragraph::new(Line::from(format!(
-            "{} ▾ {}",
-            row.workspace_number, row.workspace_label
+            "{} {} {}",
+            row.workspace_number,
+            if row.group_collapsed { "▸" } else { "▾" },
+            row.workspace_label
         )))
         .style(title)
         .render(Rect::new(rect.x, rect.y, rect.width, 1), buffer);

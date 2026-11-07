@@ -139,6 +139,34 @@ pub fn handoff_pane_aliases(
 }
 
 #[cfg(unix)]
+pub fn handoff_public_pane_aliases(
+    snapshot: &SessionSnapshot,
+    workspaces: &[Workspace],
+    public_aliases: &HashMap<String, u32>,
+) -> HashMap<String, PaneId> {
+    // Include unchanged IDs, but never infer an old identity from a new raw ID.
+    // A closed pane's raw number can belong to a different pane after restore.
+    let mut remapped = HashMap::new();
+    for (ws_snap, workspace) in snapshot.workspaces.iter().zip(workspaces) {
+        for (tab_snap, tab) in ws_snap.tabs.iter().zip(&workspace.tabs) {
+            remapped.extend(
+                collect_snapshot_pane_ids(&tab_snap.layout)
+                    .into_iter()
+                    .zip(tab.layout.pane_ids()),
+            );
+        }
+    }
+    public_aliases
+        .iter()
+        .filter_map(|(public_id, old_raw)| {
+            remapped
+                .get(old_raw)
+                .map(|pane_id| (public_id.clone(), *pane_id))
+        })
+        .collect()
+}
+
+#[cfg(unix)]
 fn collect_snapshot_pane_ids(node: &LayoutSnapshot) -> Vec<u32> {
     let mut ids = Vec::new();
     collect_snapshot_ids_inner(node, &mut ids);
@@ -1013,6 +1041,29 @@ fn collect_ids_inner(node: &Node, ids: &mut Vec<PaneId>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn handoff_public_aliases_remap_only_panes_in_the_source_snapshot() {
+        let ws = Workspace::test_new("restored");
+        let live = ws.tabs[0].layout.focused();
+        let mut snapshot = super::super::capture(
+            std::slice::from_ref(&ws),
+            &HashMap::new(),
+            &Default::default(),
+            Some(0),
+            0,
+        );
+        let old_raw = live.raw() + 100;
+        snapshot.workspaces[0].tabs[0].layout = LayoutSnapshot::Pane(old_raw);
+        let aliases = HashMap::from([
+            ("live:p1".into(), old_raw),
+            ("closed:p1".into(), live.raw()),
+        ]);
+        let remapped = handoff_public_pane_aliases(&snapshot, &[ws], &aliases);
+        assert_eq!(remapped.get("live:p1"), Some(&live));
+        assert!(!remapped.contains_key("closed:p1"));
+    }
 
     fn test_session_path(name: &str) -> String {
         std::env::current_dir()

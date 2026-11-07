@@ -174,7 +174,8 @@ def main():
     for key in list(os.environ):
         if key.startswith("HERDR_"):
             del os.environ[key]
-    run([sys.executable, repo / "custom/rehearse.py", str(current.resolve()), str(candidate)])
+    run([sys.executable, repo / "custom/rehearse.py", str(current.resolve()), str(candidate),
+         "--tree", "--collapse", "--transfer"])
     if args.activate:
         activate(candidate, current.resolve(), root)
     else:

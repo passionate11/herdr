@@ -48,6 +48,25 @@ impl ClientShellState {
             })
             .collect::<Vec<_>>();
         remote_collapsed_groups.sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
+        let mut collapsed_agent_groups = self
+            .config
+            .collapsed_agent_groups
+            .iter()
+            .flat_map(|(endpoint_id, groups)| {
+                groups
+                    .iter()
+                    .map(|workspace_id| preferences::ClientCollapsedAgentGroup {
+                        profile_id: match endpoint_id {
+                            ClientEndpointId::Local => None,
+                            ClientEndpointId::Ssh(profile_id) => Some(profile_id.to_string()),
+                        },
+                        workspace_id: workspace_id.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        collapsed_agent_groups.sort_by(|left, right| {
+            (&left.profile_id, &left.workspace_id).cmp(&(&right.profile_id, &right.workspace_id))
+        });
         let preferences = preferences::ClientChromePreferences {
             sidebar_width: self.sidebar_width_manual.then_some(self.sidebar_width),
             sidebar_section_split: self
@@ -61,6 +80,7 @@ impl ClientShellState {
                 .then_some(self.config.agent_panel_sort),
             collapsed_groups,
             remote_collapsed_groups,
+            collapsed_agent_groups,
         };
         if let Err(error) = preferences::store(path, preferences) {
             self.set_endpoint_error(error);
@@ -126,6 +146,7 @@ impl ClientShellConfig {
             agent_card_background: None,
             agent_card_foreground: None,
             agent_panel_sort: config.ui.agent_panel_sort,
+            collapsed_agent_groups: HashMap::new(),
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
             toast_delivery: config.ui.toast.delivery,

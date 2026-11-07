@@ -681,6 +681,9 @@ impl ClientShellState {
     /// Hit-test order determines which overlapping control receives the event;
     /// the sidebar toggle takes precedence over the agent scrollbar beneath it.
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
+        if self.handle_agent_drag(mouse, outcome) {
+            return;
+        }
         self.update_link_hover(mouse, outcome);
         let point = (mouse.column, mouse.row);
         if self.mode == ClientShellMode::Navigate
@@ -2038,6 +2041,44 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                let agent_group = self
+                    .hits
+                    .agent_group_toggles
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .map(|(_, endpoint, workspace)| (endpoint.clone(), workspace.clone()));
+                if let Some((endpoint, workspace)) = agent_group {
+                    let pane_id = self
+                        .endpoints
+                        .iter()
+                        .find(|candidate| candidate.endpoint_id == endpoint)
+                        .and_then(|candidate| candidate.snapshot.as_deref())
+                        .and_then(|snapshot| {
+                            snapshot
+                                .agents
+                                .iter()
+                                .find(|agent| agent.workspace_id == workspace)
+                        })
+                        .map(|agent| agent.pane_id.clone());
+                    let groups = self
+                        .config
+                        .collapsed_agent_groups
+                        .entry(endpoint.clone())
+                        .or_default();
+                    if !groups.remove(&workspace) {
+                        groups.insert(workspace);
+                    }
+                    if let Some(pane_id) = pane_id {
+                        self.reveal_endpoint_agent(
+                            &endpoint,
+                            &pane_id,
+                            self.hits.agent_body.height,
+                        );
+                    }
+                    self.persist_chrome_preferences(outcome);
+                    outcome.repaint = true;
+                    return;
+                }
                 if self.handle_endpoint_machine_click(point, outcome) {
                     return;
                 }
@@ -2141,6 +2182,15 @@ impl ClientShellState {
                     self.tab_press = Some(tab_press);
                     return;
                 }
+                if let Some((_, endpoint, pane_id)) = self
+                    .hits
+                    .endpoint_agents
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                    .cloned()
+                {
+                    self.start_agent_press(&endpoint, &pane_id, point);
+                }
                 if self.handle_endpoint_agent_click(point, outcome) {
                     return;
                 }
@@ -2151,6 +2201,7 @@ impl ClientShellState {
                     .find(|(rect, _)| super::contains(*rect, point))
                     .map(|(_, pane_id)| pane_id.clone());
                 if let Some(pane_id) = agent_pane_id {
+                    self.start_agent_press(&ClientEndpointId::Local, &pane_id, point);
                     self.push_endpoint_method(
                         crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
                             pane_id,

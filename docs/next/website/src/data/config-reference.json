@@ -1070,13 +1070,13 @@
           "key": "ui.sidebar.agents.group_tree",
           "type": "boolean",
           "default": "false",
-          "description": "Use workspace tree headings and short, untitled branches for agents sharing a split tab with Herdr's original status symbols and theme colors. Takes precedence over group_boxes in spaces order. Priority order and custom agent views keep their existing layout."
+          "description": "Use clickable workspace tree headings and short, untitled branches for agents sharing a split tab with Herdr's original status symbols and theme colors. Click a heading to fold or unfold its agents; folds persist per endpoint and workspace independently of spaces panel groups. Takes precedence over group_boxes in spaces order. Priority order, custom agent views and small viewport fallback layouts show all agents."
         },
         {
           "key": "ui.sidebar.agents.cards",
           "type": "boolean",
           "default": "false",
-          "description": "Tint agent cards in grouped lists using the host terminal colors, with stronger tint for the focused agent. The first row_gap row becomes a half-height card edge; remaining gap rows stay blank."
+          "description": "Tint agent cards in grouped lists using the host terminal colors, with stronger tint for the focused agent. In the tree layout, the first row_gap row between tab subgroups becomes a half-height card edge; agents in one split tab stay compact."
         },
         {
           "key": "ui.sidebar.agents.row_gap",

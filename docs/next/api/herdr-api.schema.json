@@ -4357,6 +4357,36 @@
           ],
           "type": "object"
         },
+        "TabTransferParams": {
+          "properties": {
+            "expected_pane_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "focus": {
+              "default": false,
+              "type": "boolean"
+            },
+            "source_workspace_id": {
+              "type": "string"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tab_id",
+            "source_workspace_id",
+            "workspace_id",
+            "expected_pane_ids"
+          ],
+          "type": "object"
+        },
         "ToastHerdrPosition": {
           "enum": [
             "top-left",
@@ -5217,6 +5247,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/TabMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "tab.transfer",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/TabTransferParams"
             }
           },
           "required": [

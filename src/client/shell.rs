@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 mod actions;
+mod agent_drag;
 mod agent_sidebar;
 mod aggregate_navigation;
 mod machine_diagnostics;

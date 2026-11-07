@@ -105,7 +105,7 @@ impl HeadlessServer {
             .iter()
             .map(|(_, runtime)| runtime.clone())
             .collect();
-        let manifest = crate::server::handoff::manifest_for(
+        let mut manifest = crate::server::handoff::manifest_for(
             snapshot,
             panes,
             params.expected_protocol,
@@ -113,6 +113,14 @@ impl HeadlessServer {
             self.api_window_title.clone(),
             self.host_shutdown_intent.get(),
         );
+        manifest.public_pane_aliases = self
+            .app
+            .state
+            .public_pane_id_aliases
+            .iter()
+            .filter(|(_, pane_id)| self.app.find_pane(**pane_id).is_some())
+            .map(|(public_id, pane_id)| (public_id.clone(), pane_id.raw()))
+            .collect();
         let mut import_child = match crate::server::handoff::spawn_handoff_import(
             import_exe.as_deref(),
             &socket_path,

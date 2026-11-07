@@ -158,7 +158,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         .map_err(io::Error::other)?;
 
     let result = rt.block_on(async {
-        let app = app::App::new_from_handoff(
+        let mut app = app::App::new_from_handoff(
             &loaded_config.config,
             config::config_diagnostic_summary(&loaded_config.diagnostics),
             api_rx,
@@ -166,6 +166,11 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
             &received.manifest.snapshot,
             &mut imports,
         )?;
+        app.state.public_pane_id_aliases = crate::persist::handoff_public_pane_aliases(
+            &received.manifest.snapshot,
+            &app.state.workspaces,
+            &received.manifest.public_pane_aliases,
+        );
         crate::server::handoff::report_restored(&mut received.stream)?;
         if std::env::var("HERDR_TEST_HANDOFF_IMPORT_FAIL").as_deref() == Ok("after_restored") {
             return Err(io::Error::other(

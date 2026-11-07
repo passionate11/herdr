@@ -1,6 +1,8 @@
 use super::*;
 use crate::ui::{ResolvedToken, ResolvedTokenKind};
 
+mod collapse;
+
 fn row(workspace: &str, tab: &str, agent: &str) -> AgentRow {
     AgentRow {
         pane_id: agent.into(),
@@ -10,6 +12,7 @@ fn row(workspace: &str, tab: &str, agent: &str) -> AgentRow {
         workspace_number: 1,
         tab_id: tab.into(),
         workspace_focused: false,
+        group_collapsed: false,
         status: crate::api::schema::AgentStatus::Idle,
         focused: false,
         rows: vec![vec![ResolvedToken {
@@ -84,7 +87,7 @@ fn custom_grouped_agents_render_space_and_untitled_split_boxes() {
             .any(|(rect, _)| rect.y <= border && border < rect.bottom()));
     }
     assert_eq!(
-        hits.agents.iter().find(|(rect, _)| rect.y == 7).unwrap().1,
+        hits.agents.iter().find(|(rect, _)| rect.y == 6).unwrap().1,
         "pi"
     );
 }
@@ -119,7 +122,7 @@ fn custom_tree_renders_untitled_split_branches_without_indenting_cards() {
             render_agent_row(buffer, rect, row, &config, grouped, cards);
         },
     );
-    let text = (3..11)
+    let text = (3..10)
         .map(|y| {
             (0..20)
                 .map(|x| buffer[(x, y)].symbol())
@@ -134,19 +137,18 @@ fn custom_tree_renders_untitled_split_branches_without_indenting_cards() {
             "1 ▾ one",
             " ├─  codex",
             " │  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
-            " │ ╭ pi",
-            " ├─┤▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+            " ├─┬ pi",
             " │ ╰ claude",
             " │  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
             " └─ ▏codex",
         ]
     );
     assert_eq!(buffer[(5, 6)].bg, agent_card_bg(&config, false));
-    assert_eq!(buffer[(5, 10)].bg, agent_card_bg(&config, true));
+    assert_eq!(buffer[(5, 9)].bg, agent_card_bg(&config, true));
     assert!(hits.agents.iter().all(|(rect, _)| rect.x == 4));
     assert!(!hits.agents.iter().any(|(rect, _)| rect.y == 3));
     assert_eq!(
-        hits.agents.iter().find(|(rect, _)| rect.y == 7).unwrap().1,
+        hits.agents.iter().find(|(rect, _)| rect.y == 6).unwrap().1,
         "pi"
     );
 }
@@ -480,6 +482,7 @@ fn custom_grouped_layout_profile() {
             let started = std::time::Instant::now();
             for _ in 0..iterations {
                 hits.agents.clear();
+                hits.agent_group_toggles.clear();
                 render_agent_list(
                     &mut buffer,
                     area,

@@ -116,6 +116,7 @@ impl ClientShellState {
             .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
             .and_then(|endpoint| endpoint.snapshot.as_deref())
             .is_none_or(|snapshot| snapshot.agent_view_label.is_none());
+        // Keyboard navigation reveals the group's heading without undoing a manual fold.
         let geometry = super::agent_sidebar::layout::AgentListGeometry::new(
             &rows,
             |row| &row.agent,
@@ -172,6 +173,10 @@ fn agent_rows(
         let mut agent = rendered_rows.remove(&key)?;
         agent.focused &= row.endpoint.endpoint_id == active_endpoint_id;
         agent.endpoint_id = Some(row.endpoint.endpoint_id.clone());
+        agent.group_collapsed = config
+            .collapsed_agent_groups
+            .get(row.endpoint.endpoint_id)
+            .is_some_and(|groups| groups.contains(&agent.workspace_id));
         agent.workspace_focused &= row.endpoint.endpoint_id == active_endpoint_id;
         Some(EndpointAgentRow {
             endpoint_id: row.endpoint.endpoint_id.clone(),
